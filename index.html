@@ -1,0 +1,1336 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Alchemy | Tie & Patino</title>
+    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@300;900&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: radial-gradient(circle, #1a1a1a 0%, #050505 100%);
+            overflow: hidden;
+            font-family: 'Montserrat', sans-serif;
+            height: 100vh;
+            color: white;
+        }
+
+        canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            z-index: 1;
+            width: 100%;
+            height: 100%;
+        }
+
+        /* LOGO VAZADO (Outline) */
+        #page-logo {
+            position: fixed;
+            top: 50px;
+            left: 50px;
+            z-index: 100;
+            font-family: 'Montserrat', sans-serif;
+            font-weight: 900;
+            font-size: 26px;
+            cursor: pointer;
+            opacity: 0;
+            pointer-events: none;
+            transition: all 0.5s ease;
+            letter-spacing: 4px;
+            color: transparent;
+            -webkit-text-stroke: 1px rgba(255, 255, 255, 0.7);
+        }
+
+        #page-logo.visible {
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        #page-logo:hover {
+            -webkit-text-stroke: 1px #fff;
+            color: rgba(255, 255, 255, 0.1);
+            text-shadow: 0 0 15px rgba(255, 255, 255, 0.4);
+        }
+
+        /* SÍMBOLOS ALQUÍMICOS (SVG) */
+        #alchemy-symbols {
+            position: absolute;
+            top: 25%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            display: flex;
+            gap: 60px;
+            z-index: 10;
+            transition: opacity 0.5s ease;
+        }
+
+        body.not-home #alchemy-symbols {
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        .alchemy-icon {
+            width: 74px;
+            height: 74px;
+            cursor: pointer;
+            transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            opacity: 0.7;
+            color: white;
+        }
+
+        .alchemy-icon svg {
+            width: 100%;
+            height: 100%;
+            fill: none;
+            stroke: currentColor;
+            stroke-width: 1.5;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+            filter: drop-shadow(0 0 2px rgba(255, 255, 255, 0.5));
+            transition: all 0.3s ease;
+        }
+
+        .alchemy-icon:hover {
+            opacity: 1;
+            transform: translateY(-5px) scale(1.1);
+        }
+
+        .alchemy-icon:hover svg {
+            stroke-width: 2;
+            filter: drop-shadow(0 0 8px rgba(255, 255, 255, 0.9));
+        }
+
+        /* Estado ativo dos símbolos */
+        .alchemy-icon.active {
+            opacity: 1;
+            transform: translateY(-5px) scale(1.1);
+        }
+
+        .alchemy-icon.active svg {
+            stroke-width: 2;
+        }
+
+        /* Cores iridescentes sutis para cada elemento */
+        .alchemy-icon:nth-child(1):hover,
+        .alchemy-icon:nth-child(1).active {
+            color: rgba(255, 180, 180, 0.95);
+        }
+
+        .alchemy-icon:nth-child(1):hover svg,
+        .alchemy-icon:nth-child(1).active svg {
+            filter: drop-shadow(0 0 10px rgba(255, 107, 107, 0.4)) drop-shadow(0 0 18px rgba(255, 107, 107, 0.25));
+        }
+
+        .alchemy-icon:nth-child(2):hover,
+        .alchemy-icon:nth-child(2).active {
+            color: rgba(255, 200, 170, 0.95);
+        }
+
+        .alchemy-icon:nth-child(2):hover svg,
+        .alchemy-icon:nth-child(2).active svg {
+            filter: drop-shadow(0 0 10px rgba(255, 169, 77, 0.4)) drop-shadow(0 0 18px rgba(255, 169, 77, 0.25));
+        }
+
+        .alchemy-icon:nth-child(3):hover,
+        .alchemy-icon:nth-child(3).active {
+            color: rgba(255, 240, 180, 0.95);
+        }
+
+        .alchemy-icon:nth-child(3):hover svg,
+        .alchemy-icon:nth-child(3).active svg {
+            filter: drop-shadow(0 0 10px rgba(255, 212, 59, 0.4)) drop-shadow(0 0 18px rgba(255, 212, 59, 0.25));
+        }
+
+        .alchemy-icon:nth-child(4):hover,
+        .alchemy-icon:nth-child(4).active {
+            color: rgba(180, 210, 255, 0.95);
+        }
+
+        .alchemy-icon:nth-child(4):hover svg,
+        .alchemy-icon:nth-child(4).active svg {
+            filter: drop-shadow(0 0 10px rgba(116, 192, 252, 0.4)) drop-shadow(0 0 18px rgba(116, 192, 252, 0.25));
+        }
+
+        /* MENU PRINCIPAL */
+        #main-nav {
+            position: fixed;
+            bottom: 50px;
+            right: 50px;
+            z-index: 100;
+            text-align: right;
+        }
+
+        #menu-trigger {
+            background: none;
+            border: none;
+            color: rgba(255, 255, 255, 0.4);
+            font-family: 'Montserrat', sans-serif;
+            font-weight: 300;
+            font-size: 0.7rem;
+            letter-spacing: 5px;
+            cursor: pointer;
+            transition: 0.3s;
+            text-transform: uppercase;
+            padding: 10px;
+        }
+
+        #menu-trigger:hover {
+            color: white;
+            letter-spacing: 8px;
+        }
+
+        .sub-menu {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            margin-bottom: 20px;
+            opacity: 0;
+            visibility: hidden;
+            transform: translateY(10px);
+            transition: all 0.4s cubic-bezier(0.165, 0.84, 0.44, 1);
+        }
+
+        .sub-menu.active {
+            opacity: 1;
+            visibility: visible;
+            transform: translateY(0);
+        }
+
+        .menu-item {
+            color: white;
+            text-decoration: none;
+            font-size: 1.2rem;
+            font-weight: 900;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            transition: 0.3s;
+            opacity: 0.6;
+            cursor: pointer;
+        }
+
+        .menu-item:hover {
+            opacity: 1;
+            padding-right: 10px;
+        }
+
+        /* REDES SOCIAIS */
+        #social-nav {
+            position: fixed;
+            bottom: 50px;
+            left: 50px;
+            z-index: 100;
+            display: flex;
+            gap: 20px;
+            align-items: center;
+            transition: opacity 0.5s ease, transform 0.5s ease;
+        }
+
+        #social-nav.hidden {
+            opacity: 0;
+            pointer-events: none;
+            transform: translateY(10px);
+        }
+
+        .social-link {
+            color: rgba(255, 255, 255, 0.4);
+            width: 24px;
+            height: 24px;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .social-link:hover {
+            color: white;
+            transform: translateY(-3px);
+        }
+
+        .social-link svg {
+            fill: currentColor;
+            width: 100%;
+            height: 100%;
+        }
+
+        /* GALERIA GRID */
+        .page-section {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            padding: 80px 0 0 0;
+            display: none;
+            z-index: 50;
+            overflow-y: auto;
+            text-align: center;
+            scrollbar-width: thin;
+            scrollbar-color: #444 transparent;
+            background: #000;
+        }
+
+        .page-section::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        .page-section::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        .page-section::-webkit-scrollbar-thumb {
+            background-color: #444;
+            border-radius: 10px;
+        }
+
+        .page-section.active {
+            display: block;
+            animation: fadeIn 1s forwards;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(15px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        h2 {
+            font-weight: 900;
+            font-size: 2rem;
+            margin-bottom: 10px;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+        }
+
+        p {
+            font-weight: 300;
+            line-height: 1.8;
+            max-width: 600px;
+            margin: 0 auto 40px auto;
+            color: #aaa;
+        }
+
+        .gallery-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 0;
+            width: 100%;
+            max-width: 100%;
+            margin: 0;
+            padding: 0;
+        }
+
+        @media (max-width: 900px) {
+            .gallery-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+
+        @media (max-width: 500px) {
+            .gallery-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .art-card {
+            background: none;
+            border: none;
+            border-radius: 0;
+            overflow: hidden;
+            text-decoration: none;
+            transition: all 0.4s cubic-bezier(0.165, 0.84, 0.44, 1);
+            position: relative;
+            display: block;
+            aspect-ratio: 1;
+            cursor: pointer;
+        }
+
+        .art-card:hover {
+            transform: scale(1.02);
+            z-index: 10;
+            box-shadow: 0 0 30px rgba(0, 0, 0, 0.8);
+        }
+
+        .img-container {
+            width: 100%;
+            height: 100%;
+            position: absolute;
+            top: 0;
+            left: 0;
+            overflow: hidden;
+            background: #000;
+        }
+
+        .img-container img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            opacity: 0.85;
+            transition: all 0.5s ease;
+        }
+
+        .art-card:hover .img-container img {
+            opacity: 1;
+            transform: scale(1.1);
+        }
+
+        .card-info {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            padding: 20px;
+            background: linear-gradient(transparent, rgba(0, 0, 0, 0.9));
+            text-align: left;
+            opacity: 0;
+            transition: opacity 0.4s ease;
+            z-index: 2;
+        }
+
+        .art-card:hover .card-info {
+            opacity: 1;
+        }
+
+        .card-info h3 {
+            font-size: 1.1rem;
+            font-weight: 900;
+            color: white;
+            letter-spacing: 1px;
+            margin-bottom: 5px;
+            text-transform: uppercase;
+        }
+
+        .card-info span {
+            font-size: 0.75rem;
+            color: #888;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+    </style>
+</head>
+
+<body>
+
+    <canvas id="canvas1"></canvas>
+
+    <h1 id="page-logo" onclick="showPage('home')">ALCHEMY</h1>
+
+    <div id="alchemy-symbols">
+        <div class="alchemy-icon" data-element="fire" data-key="1">
+            <svg viewBox="0 0 24 24">
+                <path d="M12 2 L22 20 L2 20 Z" />
+            </svg>
+        </div>
+        <div class="alchemy-icon" data-element="water" data-key="2">
+            <svg viewBox="0 0 24 24">
+                <path d="M12 22 L2 4 L22 4 Z" />
+            </svg>
+        </div>
+        <div class="alchemy-icon" data-element="air" data-key="3">
+            <svg viewBox="0 0 24 24">
+                <path d="M12 2 L22 20 L2 20 Z" />
+                <line x1="4" y1="13" x2="20" y2="13" />
+            </svg>
+        </div>
+        <div class="alchemy-icon" data-element="earth" data-key="4">
+            <svg viewBox="0 0 24 24">
+                <path d="M12 22 L2 4 L22 4 Z" />
+                <line x1="4" y1="14" x2="20" y2="14" />
+            </svg>
+        </div>
+    </div>
+
+    <div id="social-nav">
+        <a href="https://www.instagram.com" target="_blank" rel="noopener noreferrer" class="social-link"><svg
+                viewBox="0 0 24 24">
+                <path
+                    d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z" />
+            </svg></a>
+        <a href="https://www.x.com" target="_blank" rel="noopener noreferrer" class="social-link"><svg
+                viewBox="0 0 24 24">
+                <path
+                    d="M18.901 1.153h3.68l-8.04 9.19L24 22.846h-7.406l-5.8-7.584-6.638 7.584H.474l8.6-9.83L0 1.154h7.594l5.243 6.932ZM17.61 20.644h2.039L6.486 3.24H4.298Z" />
+            </svg></a>
+        <a href="https://www.youtube.com" target="_blank" rel="noopener noreferrer" class="social-link"><svg
+                viewBox="0 0 24 24">
+                <path
+                    d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z" />
+            </svg></a>
+    </div>
+
+    <nav id="main-nav">
+        <div class="sub-menu" id="subMenus">
+            <div class="menu-item" onclick="showPage('home')">Home</div>
+            <div class="menu-item" onclick="showPage('art')">Art</div>
+            <div class="menu-item" onclick="showPage('about')">About</div>
+        </div>
+        <button id="menu-trigger">Menu</button>
+    </nav>
+
+    <section id="art" class="page-section">
+        <div class="gallery-grid">
+            <a href="https://ipfs.io/ipfs/bafkreichyjodjpjogzkmxndzoh4goqrjthbjfdx7zbzycr42pqycgixel4" target="_blank"
+                class="art-card">
+                <div class="img-container"><img src="assets/gifs/4 elementos.gif" alt="4 Elements"
+                        onerror="this.src='https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?q=80&w=800&auto=format&fit=crop'">
+                </div>
+                <div class="card-info">
+                    <h3>4 Elements</h3><span>IPFS / Generative</span>
+                </div>
+            </a>
+            <a href="https://ipfs.io/ipfs/bafybeihlfzqypcumlv7epyvd3ib2yfs6a3xyrxbiizgukk27u4nufsh2qy" target="_blank"
+                class="art-card">
+                <div class="img-container"><img src="assets/gifs/stillness.gif" alt="Stillness"
+                        onerror="this.src='https://images.unsplash.com/photo-1550684848-fac1c5b4e853?q=80&w=800&auto=format&fit=crop'">
+                </div>
+                <div class="card-info">
+                    <h3>Stillness</h3><span>IPFS / Generative</span>
+                </div>
+            </a>
+            <a href="https://ipfs.io/ipfs/bafkreiesrzsgc3vis65irxknnldclttci2mbpi6nhog6rtppseciabcznm" target="_blank"
+                class="art-card">
+                <div class="img-container"><img src="assets/gifs/cladni.gif" alt="Chladni"
+                        onerror="this.src='https://images.unsplash.com/photo-1542369688-66718d0426d4?q=80&w=800&auto=format&fit=crop'">
+                </div>
+                <div class="card-info">
+                    <h3>Chladni</h3><span>IPFS / Generative</span>
+                </div>
+            </a>
+            <a href="https://ipfs.io/ipfs/bafkreicsyojceeooulcbucihksc2tu47yskxfttl37l6zc7wziypjwhzs4" target="_blank"
+                class="art-card">
+                <div class="img-container"><img src="assets/gifs/grid.gif" alt="Grid"
+                        onerror="this.src='https://images.unsplash.com/photo-1550684848-fac1c5b4e853?q=80&w=800&auto=format&fit=crop'">
+                </div>
+                <div class="card-info">
+                    <h3>Grid</h3><span>IPFS / Generative</span>
+                </div>
+            </a>
+            <a href="https://editor.p5js.org/pedrotiepimfonseca/full/PXMQfiH_K" target="_blank" class="art-card">
+                <div class="img-container"><img src="assets/gifs/quadrados.gif" alt="Magic Squares"
+                        onerror="this.src='https://images.unsplash.com/photo-1542369688-66718d0426d4?q=80&w=800&auto=format&fit=crop'">
+                </div>
+                <div class="card-info">
+                    <h3>Magic Squares</h3><span>p5.js / Geometry</span>
+                </div>
+            </a>
+            <a href="https://editor.p5js.org/pedrotiepimfonseca/full/xatxLK3Bp" target="_blank" class="art-card">
+                <div class="img-container"><img src="assets/gifs/prticulas.gif" alt="Particulas"
+                        onerror="this.src='https://images.unsplash.com/photo-1519751138062-85a52d55c841?q=80&w=800&auto=format&fit=crop'">
+                </div>
+                <div class="card-info">
+                    <h3>Particulas</h3><span>p5.js / Simulation</span>
+                </div>
+            </a>
+            <a href="https://editor.p5js.org/pedrotiepimfonseca/full/rZXhrH-HA" target="_blank" class="art-card">
+                <div class="img-container"><img src="assets/gifs/kaledioscopio.gif" alt="Kaleidoscope"
+                        onerror="this.src='https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?q=80&w=800&auto=format&fit=crop'">
+                </div>
+                <div class="card-info">
+                    <h3>Kaleidoscope</h3><span>p5.js / Generative</span>
+                </div>
+            </a>
+        </div>
+    </section>
+
+    <section id="about" class="page-section">
+        <h2>Bio</h2>
+        <p>Artistas multimídia focados na intersecção entre código e estética.</p>
+    </section>
+
+    <script>
+        const canvas = document.getElementById('canvas1');
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        const menuTrigger = document.getElementById('menu-trigger');
+        const subMenus = document.getElementById('subMenus');
+        const socialNav = document.getElementById('social-nav');
+        const pageLogo = document.getElementById('page-logo');
+        const alchemySymbols = document.getElementById('alchemy-symbols');
+        const alchemyIcons = document.querySelectorAll('.alchemy-icon');
+
+        let particlesArray = [];
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        let audioCtx = new AudioContext();
+        try { audioCtx.resume(); } catch (e) { }
+
+        // HARMONIA - Pentatônica de F# (F# Pentatonic Major)
+        // F#4, G#4, A#4, C#5, D#5, F#5, G#5
+        const fSharpPentatonic = [369.99, 415.30, 466.16, 554.37, 622.25, 739.99, 830.61];
+
+        // Acordes para os PADs - Viagem Espacial (Pentatônica de F#)
+        // Pentatônica F#: F#, G#, A#, C#, D#
+        // Acordes construídos apenas com notas da pentatônica - quartas suspensas e clusters abertos
+        // Fire: C#5 (flutuar no vazio) - C#3, G#3, D#4, G#4
+        // Water: G#m7(no3) (nebulosa) - G#3, D#4, F#4, A#4
+        // Air: F#5sus2 (ignição estelar) - F#3, G#3, C#4, F#4
+        // Earth: D#m(add9) (planeta distante) - D#3, F#3, A#3, F#4
+        const chords = {
+            'fire': [138.59, 207.65, 311.13, 415.30],  // C#5
+            'water': [207.65, 311.13, 369.99, 466.16],  // G#m7(no3)
+            'air': [185.00, 207.65, 277.18, 369.99],  // F#5sus2
+            'earth': [155.56, 185.00, 233.08, 369.99]   // D#m(add9)
+        };
+
+        let lastPlayedIndex = -1;
+        const mouse = { x: null, y: null, radius: 49 };
+        let isHome = true;
+
+        let lastMouseMoveTime = Date.now();
+        let lastMousePos = { x: null, y: null };
+        let homeCenterX = 0;
+        let homeTextWidth = 1;
+
+        // --- SISTEMA DE SÍNTESE FM COM DELAY ---
+        let delayNode, feedbackGain, wetGain, dryGain;
+
+        // --- SISTEMA DE PAD LOOP ---
+        let activePad = null;  // Elemento atualmente tocando
+        let padOscillators = []; // Array para guardar os osciladores ativos
+        let padGainNode = null;  // Gain node principal do pad
+
+        const elementOrder = ['fire', 'water', 'air', 'earth'];
+        const keyToElement = {
+            '1': 'fire',
+            '2': 'water',
+            '3': 'air',
+            '4': 'earth'
+        };
+
+        // --- MODO AUTOMÁTICO ---
+        let autoMode = false;
+        let autoModeInterval = null;
+        let autoModeIndex = 0;
+        let kickInterval = null;
+        const AUTO_BPM = 80;
+        const AUTO_BARS = 2; // 2 compassos 4/4 por acorde
+        const AUTO_INTERVAL = (60 / AUTO_BPM) * 4 * AUTO_BARS * 1000; // ms por acorde (8 segundos)
+
+        // Mapeamento de teclas para as letras do título ALCHEMY
+        // Cada letra corresponde a uma nota da escala pentatônica
+        const letterToNote = {
+            'a': 0,  // A -> primeira nota
+            'l': 1,  // L -> segunda nota
+            'c': 2,  // C -> terceira nota
+            'h': 3,  // H -> quarta nota
+            'e': 4,  // E -> quinta nota
+            'm': 5,  // M -> sexta nota
+            'y': 6   // Y -> sétima nota
+        };
+
+        // Letras do título e estado de iluminação
+        const titleLetters = ['a', 'l', 'c', 'h', 'e', 'm', 'y'];
+        const litLetters = new Set(); // Letras atualmente iluminadas
+
+        function setupDelay() {
+            if (!audioCtx) return;
+            delayNode = audioCtx.createDelay(2.0);
+
+            // Delay sincronizado com BPM
+            // 1/8 triplet = tercina de colcheia = 1/3 de um tempo
+            // A 80 BPM: 1 tempo = 60/80 = 0.75s
+            // 1/3 tempo = 0.75 / 3 = 0.25s
+            const delayTime = (60 / AUTO_BPM) / 3;
+            delayNode.delayTime.value = delayTime;
+
+            feedbackGain = audioCtx.createGain();
+            feedbackGain.gain.value = 0.6; // 60% feedback
+
+            wetGain = audioCtx.createGain();
+            wetGain.gain.value = 0.3; // 30% wet
+
+            dryGain = audioCtx.createGain();
+            dryGain.gain.value = 0.7; // 70% dry
+
+            // Feedback loop
+            delayNode.connect(feedbackGain);
+            feedbackGain.connect(delayNode);
+
+            // Wet signal
+            delayNode.connect(wetGain);
+            wetGain.connect(audioCtx.destination);
+        }
+
+        setupDelay();
+
+        // Função para criar um som de PAD suave e longo
+        function createPadVoice(freq, masterGain) {
+            const osc1 = audioCtx.createOscillator();
+            const osc2 = audioCtx.createOscillator();
+            const osc3 = audioCtx.createOscillator();
+
+            // Osciladores com formas de onda suaves
+            osc1.type = 'sine';
+            osc2.type = 'sine';
+            osc3.type = 'triangle';
+
+            // Frequências levemente detuned para criar riqueza
+            osc1.frequency.value = freq;
+            osc2.frequency.value = freq * 1.002; // Leve detune
+            osc3.frequency.value = freq * 0.5;    // Uma oitava abaixo
+
+            // Ganhos individuais
+            const gain1 = audioCtx.createGain();
+            const gain2 = audioCtx.createGain();
+            const gain3 = audioCtx.createGain();
+
+            gain1.gain.value = 0.3;
+            gain2.gain.value = 0.2;
+            gain3.gain.value = 0.15;
+
+            // Filtro passa-baixa para suavizar
+            const filter = audioCtx.createBiquadFilter();
+            filter.type = 'lowpass';
+            filter.frequency.value = 800;
+            filter.Q.value = 0.5;
+
+            // Conectar
+            osc1.connect(gain1);
+            osc2.connect(gain2);
+            osc3.connect(gain3);
+
+            gain1.connect(filter);
+            gain2.connect(filter);
+            gain3.connect(filter);
+
+            filter.connect(masterGain);
+
+            // Iniciar osciladores
+            osc1.start();
+            osc2.start();
+            osc3.start();
+
+            return { osc1, osc2, osc3, gain1, gain2, gain3, filter };
+        }
+
+        function startPad(elementType) {
+            if (!isHome) return;
+            if (!audioCtx) return;
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+
+            const chordNotes = chords[elementType];
+            if (!chordNotes) return;
+
+            // Para qualquer pad que esteja tocando
+            stopPad();
+
+            // Criar novo gain node master
+            padGainNode = audioCtx.createGain();
+            padGainNode.gain.setValueAtTime(0, audioCtx.currentTime);
+            padGainNode.gain.linearRampToValueAtTime(0.15, audioCtx.currentTime + 1.5); // Fade in suave
+
+            // Conectar ao sistema de delay
+            padGainNode.connect(dryGain);
+            dryGain.connect(audioCtx.destination);
+            padGainNode.connect(delayNode);
+
+            // Criar vozes do pad para cada nota do acorde
+            padOscillators = [];
+            chordNotes.forEach(freq => {
+                const voice = createPadVoice(freq, padGainNode);
+                padOscillators.push(voice);
+            });
+
+            activePad = elementType;
+            updateActiveIcon();
+        }
+
+        function stopPad() {
+            if (padGainNode && padOscillators.length > 0) {
+                const now = audioCtx.currentTime;
+
+                // Fade out suave
+                padGainNode.gain.cancelScheduledValues(now);
+                padGainNode.gain.setValueAtTime(padGainNode.gain.value, now);
+                padGainNode.gain.linearRampToValueAtTime(0, now + 0.8);
+
+                // Parar osciladores após o fade out
+                const oscillatorsToStop = [...padOscillators];
+                const gainToDisconnect = padGainNode;
+
+                setTimeout(() => {
+                    oscillatorsToStop.forEach(voice => {
+                        try {
+                            voice.osc1.stop();
+                            voice.osc2.stop();
+                            voice.osc3.stop();
+                        } catch (e) { }
+                    });
+                    try {
+                        gainToDisconnect.disconnect();
+                    } catch (e) { }
+                }, 850);
+            }
+
+            padOscillators = [];
+            padGainNode = null;
+            activePad = null;
+            updateActiveIcon();
+        }
+
+        function togglePad(elementType) {
+            if (activePad === elementType) {
+                // Se já está tocando este elemento, desliga
+                stopPad();
+            } else {
+                // Se está tocando outro ou nenhum, inicia este
+                startPad(elementType);
+            }
+        }
+
+        function updateActiveIcon() {
+            alchemyIcons.forEach(icon => {
+                const element = icon.getAttribute('data-element');
+                if (element === activePad) {
+                    icon.classList.add('active');
+                } else {
+                    icon.classList.remove('active');
+                }
+            });
+        }
+
+        // --- FUNÇÕES DO MODO AUTOMÁTICO ---
+
+        // Função para tocar o kick (batida grave e curta)
+        function playKick() {
+            if (!audioCtx || audioCtx.state !== 'running') return;
+            const now = audioCtx.currentTime;
+
+            // Oscilador para o corpo do kick
+            const osc = audioCtx.createOscillator();
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(150, now);
+            osc.frequency.exponentialRampToValueAtTime(40, now + 0.1);
+
+            // Ganho com envelope rápido
+            const gain = audioCtx.createGain();
+            gain.gain.setValueAtTime(0.5, now);
+            gain.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
+
+            // Filtro para dar corpo
+            const filter = audioCtx.createBiquadFilter();
+            filter.type = 'lowpass';
+            filter.frequency.value = 200;
+
+            osc.connect(filter);
+            filter.connect(gain);
+            gain.connect(dryGain);
+
+            osc.start(now);
+            osc.stop(now + 0.3);
+        }
+
+        // Duração de uma semínima (tempo) em ms
+        const BEAT_MS = (60 / AUTO_BPM) * 1000; // 1000ms a 60 BPM
+        // Duração de uma colcheia em ms
+        const EIGHTH_MS = BEAT_MS / 2; // 500ms
+        // Duração de um compasso em ms
+        const BAR_MS = BEAT_MS * 4; // 4000ms
+
+        let kickTimeouts = [];
+
+        function scheduleKickPattern() {
+            // Tempo 1 (início do compasso)
+            const kick1 = setTimeout(() => {
+                playKick();
+            }, 0);
+
+            // Segunda colcheia do tempo 4 (tempo 4 + meia colcheia = 3.5 tempos desde o início)
+            // Tempo 4 começa em 3 tempos, segunda colcheia = 3 + 0.5 = 3.5 tempos
+            // Adiantado 20ms para swing (batida de coração)
+            const kick2 = setTimeout(() => {
+                playKick();
+            }, BEAT_MS * 3 + EIGHTH_MS - 20);
+
+            kickTimeouts.push(kick1, kick2);
+        }
+
+        function startKick() {
+            if (kickInterval) return;
+
+            // Tocar padrão imediatamente
+            scheduleKickPattern();
+
+            // Repetir o padrão a cada compasso
+            kickInterval = setInterval(() => {
+                scheduleKickPattern();
+            }, BAR_MS);
+        }
+
+        function stopKick() {
+            // Limpar todos os timeouts pendentes
+            kickTimeouts.forEach(t => clearTimeout(t));
+            kickTimeouts = [];
+
+            if (kickInterval) {
+                clearInterval(kickInterval);
+                kickInterval = null;
+            }
+        }
+
+        function startAutoMode() {
+            if (autoMode) return;
+            autoMode = true;
+            autoModeIndex = 0;
+
+            // Iniciar imediatamente com o primeiro acorde
+            startPad(elementOrder[autoModeIndex]);
+
+            // Iniciar o kick
+            startKick();
+
+            // Configurar intervalo para trocar acordes
+            autoModeInterval = setInterval(() => {
+                autoModeIndex = (autoModeIndex + 1) % elementOrder.length;
+                startPad(elementOrder[autoModeIndex]);
+            }, AUTO_INTERVAL);
+        }
+
+        function stopAutoMode() {
+            if (!autoMode && !activePad) return;
+
+            autoMode = false;
+            if (autoModeInterval) {
+                clearInterval(autoModeInterval);
+                autoModeInterval = null;
+            }
+            stopKick();
+            stopPad();
+        }
+
+        function toggleAutoMode() {
+            if (autoMode) {
+                stopAutoMode();
+            } else {
+                startAutoMode();
+            }
+        }
+
+        // Som FM original para as notas do título
+        function playFMSound(freq, startTime, duration = 1.5) {
+            if (!audioCtx || audioCtx.state !== 'running') return;
+            const now = startTime || audioCtx.currentTime;
+
+            const carrier = audioCtx.createOscillator();
+            carrier.type = 'sine';
+            carrier.frequency.setValueAtTime(freq, now);
+
+            const modulator = audioCtx.createOscillator();
+            modulator.type = 'sine';
+            modulator.frequency.setValueAtTime(freq * 2, now);
+
+            const modGain = audioCtx.createGain();
+            modGain.gain.setValueAtTime(freq * 0.5, now);
+            modGain.gain.exponentialRampToValueAtTime(1, now + 0.4);
+
+            const gain = audioCtx.createGain();
+            gain.gain.setValueAtTime(0, now);
+            gain.gain.linearRampToValueAtTime(0.4, now + 0.03);
+            gain.gain.exponentialRampToValueAtTime(0.001, now + duration);
+
+            modulator.connect(modGain);
+            modGain.connect(carrier.frequency);
+            carrier.connect(gain);
+
+            if (audioCtx.createStereoPanner) {
+                const panner = audioCtx.createStereoPanner();
+                panner.pan.value = (Math.random() * 0.6) - 0.3;
+                gain.connect(panner);
+
+                // Dry signal
+                panner.connect(dryGain);
+                dryGain.connect(audioCtx.destination);
+
+                // Send to delay
+                panner.connect(delayNode);
+            } else {
+                gain.connect(dryGain);
+                dryGain.connect(audioCtx.destination);
+                gain.connect(delayNode);
+            }
+
+            carrier.start(now);
+            modulator.start(now);
+            carrier.stop(now + duration + 0.1);
+            modulator.stop(now + duration + 0.1);
+        }
+
+        function playNote() {
+            if (!isHome) return;
+            if (!audioCtx || audioCtx.state !== 'running') return;
+
+            const section = Math.floor((mouse.x / window.innerWidth) * 7);
+            let hit = mouse.y > (window.innerHeight / 3) - 150 && mouse.y < (window.innerHeight / 3) + 200;
+
+            if (hit && section !== lastPlayedIndex) {
+                playFMSound(fSharpPentatonic[section % 7], audioCtx.currentTime, 1.2);
+                lastPlayedIndex = section;
+            }
+        }
+
+        function showPage(pageId) {
+            isHome = (pageId === 'home');
+
+            if (isHome) {
+                document.body.classList.remove('not-home');
+                socialNav.classList.remove('hidden');
+                pageLogo.classList.remove('visible');
+            } else {
+                document.body.classList.add('not-home');
+                socialNav.classList.add('hidden');
+                pageLogo.classList.add('visible');
+                // Para toda a música quando sai da home
+                stopAutoMode();
+            }
+
+            document.querySelectorAll('.page-section').forEach(section => section.classList.remove('active'));
+            if (!isHome) document.getElementById(pageId).classList.add('active');
+            subMenus.classList.remove('active');
+            menuTrigger.textContent = 'Menu';
+            init();
+        }
+
+        menuTrigger.addEventListener('click', () => {
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+            subMenus.classList.toggle('active');
+            menuTrigger.textContent = subMenus.classList.contains('active') ? 'Close' : 'Menu';
+        });
+
+        ['click', 'keydown', 'touchstart', 'wheel'].forEach(evt => {
+            window.addEventListener(evt, () => {
+                if (audioCtx.state === 'suspended') audioCtx.resume();
+            }, { once: true });
+        });
+
+        // Event listeners para os ícones (mouse)
+        alchemyIcons.forEach(icon => {
+            icon.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const element = icon.getAttribute('data-element');
+                togglePad(element);
+            });
+
+            // Som ao passar o mouse por cima
+            icon.addEventListener('mouseenter', () => {
+                if (!isHome) return;
+                if (audioCtx.state === 'suspended') audioCtx.resume();
+
+                const element = icon.getAttribute('data-element');
+                const chordNotes = chords[element];
+                if (chordNotes && audioCtx.state === 'running') {
+                    // Tocar uma nota suave do acorde correspondente
+                    playFMSound(chordNotes[0] * 2, audioCtx.currentTime, 0.8);
+                }
+            });
+        });
+
+        // Event listener para teclado (teclas 1-4 para elementos, A-L-C-H-E-M-Y para notas, espaço para modo auto)
+        window.addEventListener('keydown', (e) => {
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+
+            // Barra de espaço para toggle do modo automático
+            if (e.code === 'Space' && isHome) {
+                e.preventDefault();
+                toggleAutoMode();
+                return;
+            }
+
+            // Teclas 1-4 para os elementos (PADs)
+            const element = keyToElement[e.key];
+            if (element && isHome) {
+                // Evita repetição se a tecla já está pressionada
+                if (e.repeat) return;
+
+                // Se modo automático está ativo, desativar ao pressionar qualquer tecla de acorde
+                if (autoMode) {
+                    stopAutoMode();
+                }
+
+                togglePad(element);
+                return;
+            }
+
+            // Teclas A, L, C, H, E, M, Y para as notas do título
+            const keyLower = e.key.toLowerCase();
+            const noteIndex = letterToNote[keyLower];
+            if (noteIndex !== undefined && isHome) {
+                if (audioCtx.state !== 'running') return;
+
+                // Evita repetição se a tecla já está pressionada
+                if (e.repeat) return;
+
+                playFMSound(fSharpPentatonic[noteIndex], audioCtx.currentTime, 1.2);
+
+                // Iluminar as partículas da letra correspondente
+                litLetters.add(keyLower);
+            }
+        });
+
+        // Event listener para soltar as teclas (apagar iluminação)
+        window.addEventListener('keyup', (e) => {
+            const keyLower = e.key.toLowerCase();
+            if (letterToNote[keyLower] !== undefined) {
+                litLetters.delete(keyLower);
+            }
+        });
+
+        window.addEventListener('mousemove', (e) => {
+            if (audioCtx.state === 'suspended') { audioCtx.resume().catch(() => { }); }
+            if (lastMousePos.x !== null && lastMousePos.y !== null) {
+                const dx = e.x - lastMousePos.x; const dy = e.y - lastMousePos.y;
+                if ((dx * dx + dy * dy) > 2.25) { lastMouseMoveTime = Date.now(); }
+            } else { lastMouseMoveTime = Date.now(); }
+            lastMousePos.x = e.x; lastMousePos.y = e.y;
+            mouse.x = e.x; mouse.y = e.y;
+            playNote();
+        });
+
+        const mouseRadiusSq = 2401;
+
+        // Gravidade lateral (puxa para a direita) - câmera lenta
+        const GRAVITY_STRENGTH = 0.003; // Força da gravidade (super lenta)
+
+        class Particle {
+            constructor(x, y, letter = null) {
+                this.x = x;
+                this.y = y;
+                this.baseX = x;
+                this.baseY = y;
+                this.size = Math.random() * 0.6 + 0.5;
+                this.density = (Math.random() * 10) + 5;
+                this.letter = letter; // Letra a qual esta partícula pertence (null = fundo)
+
+                // Sistema de desprendimento
+                this.isFalling = false;
+                this.fallVelocityX = 0;
+                this.fallVelocityY = 0;
+                this.detachTimer = Math.random() * 4000 + 300; // 30% mais espaçado
+                this.fallAlpha = 1; // Opacidade durante a queda
+            }
+            update() {
+                if (this.letter && !this.isFalling) {
+                    // Partícula ainda presa ao título
+                    const dx = mouse.x - this.x;
+                    const dy = mouse.y - this.y;
+                    const distSq = dx * dx + dy * dy;
+
+                    if (distSq < mouseRadiusSq) {
+                        const dist = Math.sqrt(distSq);
+                        const force = (mouse.radius - dist) / mouse.radius;
+                        this.x -= (dx / dist) * force * this.density;
+                        this.y -= (dy / dist) * force * this.density;
+                    } else {
+                        this.x += (this.baseX - this.x) * 0.1;
+                        this.y += (this.baseY - this.y) * 0.1;
+                    }
+
+                    // Contador para desprender
+                    this.detachTimer--;
+                    if (this.detachTimer <= 0) {
+                        this.isFalling = true;
+                        this.fallVelocityX = Math.random() * 0.02;
+                        this.fallVelocityY = (Math.random() - 0.5) * 0.01;
+                    }
+                } else if (this.letter && this.isFalling) {
+                    // Partícula caindo/sendo puxada pela gravidade (câmera lenta)
+                    this.fallVelocityX += GRAVITY_STRENGTH;
+                    this.fallVelocityY += (Math.random() - 0.5) * 0.002; // Variação vertical mínima
+
+                    this.x += this.fallVelocityX;
+                    this.y += this.fallVelocityY;
+
+                    // Fade out super gradual
+                    this.fallAlpha -= 0.0002;
+
+                    // Se sair da tela ou ficar invisível, recria na posição original
+                    if (this.x > window.innerWidth + 50 || this.fallAlpha <= 0) {
+                        this.x = this.baseX;
+                        this.y = this.baseY;
+                        this.isFalling = false;
+                        this.fallVelocityX = 0;
+                        this.fallVelocityY = 0;
+                        this.fallAlpha = 1;
+                        this.detachTimer = Math.random() * 6500 + 650;
+                    }
+                } else {
+                    // Partículas de fundo (comportamento normal)
+                    const dx = mouse.x - this.x;
+                    const dy = mouse.y - this.y;
+                    const distSq = dx * dx + dy * dy;
+
+                    if (distSq < mouseRadiusSq) {
+                        const dist = Math.sqrt(distSq);
+                        const force = (mouse.radius - dist) / mouse.radius;
+                        this.x -= (dx / dist) * force * this.density;
+                        this.y -= (dy / dist) * force * this.density;
+                    } else {
+                        this.x += (this.baseX - this.x) * 0.1;
+                        this.y += (this.baseY - this.y) * 0.1;
+                    }
+                }
+            }
+        }
+
+        function init() {
+            const dpr = window.devicePixelRatio || 1;
+            canvas.width = window.innerWidth * dpr;
+            canvas.height = window.innerHeight * dpr;
+            ctx.scale(dpr, dpr);
+            particlesArray = [];
+
+            if (isHome) {
+                const fontSize = Math.min(window.innerWidth / 7, 120);
+                const centerY = window.innerHeight / 2;
+
+                ctx.font = `900 ${fontSize}px Montserrat`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+
+                // Medir a largura total do texto para calcular posições
+                const fullText = 'ALCHEMY';
+                const fullWidth = ctx.measureText(fullText).width;
+                const startX = (window.innerWidth - fullWidth) / 2;
+
+                const width4 = canvas.width * 4;
+                const baseStep = Math.round(1.7 * dpr);
+
+                // Desenhar e capturar cada letra separadamente
+                let currentX = startX;
+                for (let i = 0; i < fullText.length; i++) {
+                    const letter = fullText[i];
+                    const letterWidth = ctx.measureText(letter).width;
+
+                    // Limpar canvas e desenhar apenas esta letra
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                    ctx.fillStyle = 'white';
+                    ctx.textAlign = 'left';
+                    ctx.fillText(letter, currentX, centerY);
+
+                    // Capturar pixels desta letra
+                    const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+
+                    // Criar partículas para esta letra
+                    for (let y = 0; y < canvas.height; y += baseStep) {
+                        const yOffset = y * width4;
+                        for (let x = 0; x < canvas.width; x += baseStep) {
+                            if (data[yOffset + (x * 4) + 3] > 100) {
+                                particlesArray.push(new Particle(x / dpr, y / dpr, titleLetters[i]));
+                            }
+                        }
+                    }
+
+                    currentX += letterWidth;
+                }
+
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+                // Adiciona partículas de fundo na Home também
+                for (let i = 0; i < 150; i++) {
+                    let p = new Particle(0, 0, null);
+                    p.x = Math.random() * window.innerWidth;
+                    p.y = Math.random() * window.innerHeight;
+                    p.baseX = p.x; p.baseY = p.y;
+                    particlesArray.push(p);
+                }
+            } else {
+                for (let i = 0; i < 150; i++) {
+                    let p = new Particle(0, 0, null);
+                    p.x = Math.random() * window.innerWidth;
+                    p.y = Math.random() * window.innerHeight;
+                    p.baseX = p.x; p.baseY = p.y;
+                    particlesArray.push(p);
+                }
+            }
+        }
+
+        function animate() {
+            ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
+
+            const len = particlesArray.length;
+
+            // Primeiro desenhar partículas normais (não iluminadas e não caindo)
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+            ctx.beginPath();
+            for (let i = 0; i < len; i++) {
+                const p = particlesArray[i];
+                p.update();
+                if ((!p.letter || !litLetters.has(p.letter)) && !p.isFalling) {
+                    ctx.rect(p.x, p.y, p.size, p.size);
+                }
+            }
+            ctx.fill();
+
+            // Desenhar partículas caindo (transição de branco/prata para dourado)
+            for (let i = 0; i < len; i++) {
+                const p = particlesArray[i];
+                if (p.isFalling) {
+                    // Calcular progresso da transformação (0 = início, 1 = totalmente dourado)
+                    // Transição mais rápida para dourado
+                    const goldProgress = Math.min(1, (1 - p.fallAlpha) * 4);
+
+                    // Interpolar de branco (255, 255, 255) para dourado intenso (255, 180, 0)
+                    const r = 255;
+                    const g = Math.round(255 - (75 * goldProgress)); // 255 -> 180
+                    const b = Math.round(255 - (255 * goldProgress)); // 255 -> 0
+
+                    ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${Math.min(1, p.fallAlpha * 1.2)})`;
+                    ctx.fillRect(p.x, p.y, p.size, p.size);
+                }
+            }
+
+            // Depois desenhar partículas iluminadas com brilho
+            if (litLetters.size > 0) {
+                ctx.shadowColor = 'rgba(255, 255, 255, 0.8)';
+                ctx.shadowBlur = 15;
+                ctx.fillStyle = 'rgba(255, 255, 255, 1)';
+                ctx.beginPath();
+                for (let i = 0; i < len; i++) {
+                    const p = particlesArray[i];
+                    if (p.letter && litLetters.has(p.letter) && !p.isFalling) {
+                        ctx.rect(p.x, p.y, p.size * 1.3, p.size * 1.3);
+                    }
+                }
+                ctx.fill();
+                ctx.shadowBlur = 0;
+            }
+
+            requestAnimationFrame(animate);
+        }
+
+        // Ajusta o gap dos símbolos para 62% da largura do texto ALCHEMY
+        function adjustSymbolsGap() {
+            const fontSize = Math.min(window.innerWidth / 7, 120);
+            ctx.font = `900 ${fontSize}px Montserrat`;
+            const textWidth = ctx.measureText('ALCHEMY').width;
+
+            // Largura total dos símbolos = 62% da largura do texto
+            const targetWidth = textWidth * 0.62;
+
+            // 4 ícones de 74px cada = 296px
+            const iconsWidth = 4 * 74;
+
+            // gap = (targetWidth - iconsWidth) / 3
+            const gap = Math.max(10, (targetWidth - iconsWidth) / 3);
+
+            const symbolsContainer = document.getElementById('alchemy-symbols');
+            if (symbolsContainer) {
+                symbolsContainer.style.gap = `${gap}px`;
+            }
+        }
+
+        document.fonts.ready.then(() => { init(); adjustSymbolsGap(); animate(); });
+        window.addEventListener('resize', () => { init(); adjustSymbolsGap(); });
+    </script>
+</body>
+
+</html>
