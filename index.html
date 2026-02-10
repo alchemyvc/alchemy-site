@@ -259,6 +259,58 @@
             height: 100%;
         }
 
+        /* BIO PAGE */
+        .bio-container {
+            max-width: 720px;
+            margin: 0 auto;
+            padding: 60px 40px 120px 40px;
+            text-align: left;
+        }
+
+        .bio-container h2 {
+            font-weight: 900;
+            font-size: 1.6rem;
+            letter-spacing: 4px;
+            text-transform: uppercase;
+            margin-bottom: 40px;
+            color: rgba(255, 255, 255, 0.9);
+        }
+
+        .bio-container .bio-text {
+            font-weight: 300;
+            font-size: 1rem;
+            line-height: 2;
+            color: rgba(255, 255, 255, 0.6);
+            margin-bottom: 28px;
+            max-width: 100%;
+            text-align: left;
+        }
+
+        .bio-container .bio-text:first-of-type {
+            color: rgba(255, 255, 255, 0.85);
+            font-size: 1.1rem;
+        }
+
+        .bio-container .bio-text:last-of-type {
+            color: rgba(255, 255, 255, 0.75);
+            font-style: italic;
+        }
+
+        @media (max-width: 600px) {
+            .bio-container {
+                padding: 40px 24px 100px 24px;
+            }
+
+            .bio-container h2 {
+                font-size: 1.2rem;
+            }
+
+            .bio-container .bio-text {
+                font-size: 0.95rem;
+                line-height: 1.9;
+            }
+        }
+
         /* GALERIA GRID */
         .page-section {
             position: absolute;
@@ -545,8 +597,30 @@
     </section>
 
     <section id="about" class="page-section">
-        <h2>Bio</h2>
-        <p>Artistas multimídia focados na intersecção entre código e estética.</p>
+        <div class="bio-container">
+            <h2>Bio</h2>
+            <p class="bio-text">Alchemy is the collaboration between Andi P and Mr Tie: mad scientists, musicians, sound
+                designers, composers, producers, beat makers, and vibe coders, building contemplative instruments for
+                the browser.</p>
+            <p class="bio-text">The work lives where sound becomes image and image becomes ritual. Interactive
+                environments that breathe, resonate, and respond to the gentlest gesture. Each piece is a space to
+                enter, not a thing to watch. Ancient systems (sacred geometry, elemental forces, biological
+                intelligence, acoustic physics) are translated into living code, not as illustration but as direct
+                experience.</p>
+            <p class="bio-text">Sound is never separate from form. Drones emerge from the same mathematics that draw the
+                visuals. Particles follow the same logic that shapes the harmony. Everything is one system, and the
+                system is alive.</p>
+            <p class="bio-text">The medium is deliberately the open web: no apps, no installs, no gatekeepers. Just a
+                browser, a screen, and your attention. The technology stays invisible so the experience can stay
+                intimate. Canvas, Web Audio, and raw JavaScript become vessels for stillness in a medium built for
+                noise.</p>
+            <p class="bio-text">There is a refusal here, a refusal of speed, of spectacle, of content that consumes and
+                discards. The work asks for presence. It rewards slowness. It treats interaction not as control but as
+                conversation: you move, the world responds, and something emerges that neither of you made alone.</p>
+            <p class="bio-text">At its core, this is a practice of translation: turning the inaudible into the visible,
+                the ancient into the immediate, the computational into the contemplative. Code as ceremony. The screen
+                as altar. Attention as the only material that matters.</p>
+        </div>
     </section>
 
     <script>
