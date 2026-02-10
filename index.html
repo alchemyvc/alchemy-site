@@ -38,7 +38,7 @@
             z-index: 100;
             font-family: 'Montserrat', sans-serif;
             font-weight: 900;
-            font-size: 26px;
+            font-size: 40px;
             cursor: pointer;
             opacity: 0;
             pointer-events: none;
@@ -313,9 +313,8 @@
 
         /* BIO BACKGROUND CANVAS */
         #bio-canvas {
-            position: absolute;
-            top: 0;
-            left: 0;
+            position: fixed;
+            inset: 0;
             width: 100%;
             height: 100%;
             z-index: 0;
@@ -1441,9 +1440,8 @@
         const bioHues = [35, 40, 28, 45, 30];
 
         function bioResize() {
-            const aboutEl = document.getElementById('about');
-            bioW = bioCanvas.width = aboutEl.offsetWidth || window.innerWidth;
-            bioH = bioCanvas.height = aboutEl.scrollHeight || window.innerHeight;
+            bioW = bioCanvas.width = window.innerWidth;
+            bioH = bioCanvas.height = window.innerHeight;
             bioCtx.fillStyle = '#08080e';
             bioCtx.fillRect(0, 0, bioW, bioH);
         }
