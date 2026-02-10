@@ -33,24 +33,28 @@
         /* LOGO VAZADO (Outline) */
         #page-logo {
             position: fixed;
-            top: 30px;
-            left: 30px;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
             z-index: 100;
             font-family: 'Montserrat', sans-serif;
             font-weight: 900;
-            font-size: 40px;
+            font-size: clamp(60px, 14vw, 120px);
             cursor: pointer;
-            opacity: 0;
-            pointer-events: none;
-            transition: all 0.5s ease;
-            letter-spacing: 4px;
+            opacity: 1;
+            pointer-events: auto;
+            transition: all 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+            letter-spacing: clamp(4px, 1.5vw, 15px);
             color: transparent;
             -webkit-text-stroke: 1px rgba(255, 255, 255, 0.7);
         }
 
-        #page-logo.visible {
-            opacity: 1;
-            pointer-events: auto;
+        #page-logo.subpage {
+            top: 30px;
+            left: 30px;
+            transform: translate(0, 0);
+            font-size: 40px;
+            letter-spacing: 4px;
         }
 
         #page-logo:hover {
@@ -1087,11 +1091,11 @@
             if (isHome) {
                 document.body.classList.remove('not-home');
                 socialNav.classList.remove('hidden');
-                pageLogo.classList.remove('visible');
+                pageLogo.classList.remove('subpage');
             } else {
                 document.body.classList.add('not-home');
                 socialNav.classList.add('hidden');
-                pageLogo.classList.add('visible');
+                pageLogo.classList.add('subpage');
                 // Para toda a música quando sai da home
                 stopAutoMode();
             }
