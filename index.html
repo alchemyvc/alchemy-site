@@ -931,33 +931,39 @@
         let kickTimeouts = [];
 
         function scheduleKickPattern() {
-            // Heartbeat in ternary feel (like 6/8)
-            // Triplet 8th = 1/3 of a beat
-            const TRIPLET_MS = BEAT_MS / 3;
+            // Heartbeat in 6 subdivisions (ternary feel)
+            // Using triplet 8ths as subdivision unit
+            // Pattern: [1=pickup] [2=DOWNBEAT] [3] [4] [5] [6] repeat
+            // 1 subdivision anacrusis + 5 subdivisions rest = 6 total
+            const SUB = BEAT_MS / 3; // triplet 8th = 1 subdivision
+            const CYCLE = SUB * 6;   // full heartbeat cycle = 6 subdivisions = 2 beats
 
-            // "DUB" = strong downbeat on beat 1
-            const downbeat = setTimeout(() => {
-                playKick(0.5); // strong landing
+            // Subdivision 1: "lu" (soft anacrusis/pickup)
+            const pickup = setTimeout(() => {
+                playKick(0.25);
             }, 0);
 
-            // "lu" = soft pickup, one triplet 8th before the barline (ternary feel)
-            const pickup = setTimeout(() => {
-                playKick(0.25); // softer pickup hit
-            }, BAR_MS - TRIPLET_MS);
+            // Subdivision 2: "DUB" (strong downbeat, 1 subdivision later)
+            const downbeat = setTimeout(() => {
+                playKick(0.5);
+            }, SUB);
 
-            kickTimeouts.push(downbeat, pickup);
+            kickTimeouts.push(pickup, downbeat);
         }
 
         function startKick() {
             if (kickInterval) return;
 
+            const SUB = BEAT_MS / 3;
+            const CYCLE = SUB * 6; // 6 subdivisions per heartbeat
+
             // Tocar padrão imediatamente
             scheduleKickPattern();
 
-            // Repetir o padrão a cada compasso
+            // Repetir a cada ciclo de 6 subdivisões
             kickInterval = setInterval(() => {
                 scheduleKickPattern();
-            }, BAR_MS);
+            }, CYCLE);
         }
 
         function stopKick() {
