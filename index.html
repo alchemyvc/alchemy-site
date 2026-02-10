@@ -678,6 +678,7 @@
         let lastPlayedIndex = -1;
         const mouse = { x: null, y: null, radius: 49 };
         let isHome = true;
+        let octaveShift = 0; // Arrow Up/Down to change octave (-2 to +3)
 
         let lastMouseMoveTime = Date.now();
         let lastMousePos = { x: null, y: null };
@@ -1074,7 +1075,8 @@
             let hit = mouse.y > (window.innerHeight / 3) - 150 && mouse.y < (window.innerHeight / 3) + 200;
 
             if (hit && section !== lastPlayedIndex) {
-                playFMSound(fSharpPentatonic[section % 7], audioCtx.currentTime, 1.2);
+                const freq = fSharpPentatonic[section % 7] * Math.pow(2, octaveShift);
+                playFMSound(freq, audioCtx.currentTime, 1.2);
                 lastPlayedIndex = section;
             }
         }
@@ -1153,6 +1155,18 @@
                 return;
             }
 
+            // Arrow Up/Down para mudar oitava
+            if (e.code === 'ArrowUp' && isHome) {
+                e.preventDefault();
+                if (octaveShift < 3) octaveShift++;
+                return;
+            }
+            if (e.code === 'ArrowDown' && isHome) {
+                e.preventDefault();
+                if (octaveShift > -2) octaveShift--;
+                return;
+            }
+
             // Teclas 1-4 para os elementos (PADs)
             const element = keyToElement[e.key];
             if (element && isHome) {
@@ -1177,7 +1191,7 @@
                 // Evita repetição se a tecla já está pressionada
                 if (e.repeat) return;
 
-                playFMSound(fSharpPentatonic[noteIndex], audioCtx.currentTime, 1.2);
+                playFMSound(fSharpPentatonic[noteIndex] * Math.pow(2, octaveShift), audioCtx.currentTime, 1.2);
 
                 // Iluminar as partículas da letra correspondente
                 litLetters.add(keyLower);
