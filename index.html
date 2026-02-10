@@ -931,18 +931,21 @@
         let kickTimeouts = [];
 
         function scheduleKickPattern() {
-            // Heartbeat: 8th-note anacrusis (pickup) landing on beat 1
-            // "lu" = soft pickup, one 8th note before the barline
-            const pickup = setTimeout(() => {
-                playKick(0.25); // softer pickup hit
-            }, BAR_MS - EIGHTH_MS);
+            // Heartbeat in ternary feel (like 6/8)
+            // Triplet 8th = 1/3 of a beat
+            const TRIPLET_MS = BEAT_MS / 3;
 
             // "DUB" = strong downbeat on beat 1
             const downbeat = setTimeout(() => {
                 playKick(0.5); // strong landing
             }, 0);
 
-            kickTimeouts.push(pickup, downbeat);
+            // "lu" = soft pickup, one triplet 8th before the barline (ternary feel)
+            const pickup = setTimeout(() => {
+                playKick(0.25); // softer pickup hit
+            }, BAR_MS - TRIPLET_MS);
+
+            kickTimeouts.push(downbeat, pickup);
         }
 
         function startKick() {
