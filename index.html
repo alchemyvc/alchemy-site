@@ -893,7 +893,7 @@
         // --- FUNÇÕES DO MODO AUTOMÁTICO ---
 
         // Função para tocar o kick (batida grave e curta)
-        function playKick() {
+        function playKick(volume = 0.5) {
             if (!audioCtx || audioCtx.state !== 'running') return;
             const now = audioCtx.currentTime;
 
@@ -905,7 +905,7 @@
 
             // Ganho com envelope rápido
             const gain = audioCtx.createGain();
-            gain.gain.setValueAtTime(0.5, now);
+            gain.gain.setValueAtTime(volume, now);
             gain.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
 
             // Filtro para dar corpo
@@ -931,19 +931,18 @@
         let kickTimeouts = [];
 
         function scheduleKickPattern() {
-            // Tempo 1 (início do compasso)
-            const kick1 = setTimeout(() => {
-                playKick();
+            // Heartbeat: 8th-note anacrusis (pickup) landing on beat 1
+            // "lu" = soft pickup, one 8th note before the barline
+            const pickup = setTimeout(() => {
+                playKick(0.25); // softer pickup hit
+            }, BAR_MS - EIGHTH_MS);
+
+            // "DUB" = strong downbeat on beat 1
+            const downbeat = setTimeout(() => {
+                playKick(0.5); // strong landing
             }, 0);
 
-            // Segunda colcheia do tempo 4 (tempo 4 + meia colcheia = 3.5 tempos desde o início)
-            // Tempo 4 começa em 3 tempos, segunda colcheia = 3 + 0.5 = 3.5 tempos
-            // Adiantado 20ms para swing (batida de coração)
-            const kick2 = setTimeout(() => {
-                playKick();
-            }, BEAT_MS * 3 + EIGHTH_MS - 20);
-
-            kickTimeouts.push(kick1, kick2);
+            kickTimeouts.push(pickup, downbeat);
         }
 
         function startKick() {
