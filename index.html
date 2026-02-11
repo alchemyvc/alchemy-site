@@ -1328,12 +1328,13 @@
 
             if (isHome) {
                 const fontSize = Math.min(window.innerWidth / 7, 120);
+                const centerY = window.innerHeight / 2;
 
                 ctx.font = `900 ${fontSize}px Montserrat`;
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'middle';
 
-                // Sync logo font size before measuring its rendered position
+                // Sync logo font size before measuring its rendered width
                 // Temporarily disable transition to get accurate measurements (not mid-animation)
                 if (!pageLogo.classList.contains('subpage')) {
                     pageLogo.style.transition = 'none';
@@ -1344,11 +1345,9 @@
                 const fullText = 'ALCHEMY';
                 const canvasTextWidth = ctx.measureText(fullText).width;
 
-                // Use the CSS logo element's actual rendered position for centering
-                // This ensures pixel-perfect alignment across devices and screen sizes
-                const logoRect = pageLogo.getBoundingClientRect();
-                const cssTextWidth = logoRect.width;
-                const centerY = logoRect.top + logoRect.height / 2;
+                // Use the CSS logo element's actual rendered width for horizontal centering
+                // This ensures pixel-perfect horizontal alignment across devices
+                const cssTextWidth = pageLogo.getBoundingClientRect().width;
                 const startX = (window.innerWidth - cssTextWidth) / 2;
                 const scale = cssTextWidth / canvasTextWidth;
 
