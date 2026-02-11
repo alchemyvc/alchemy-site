@@ -59,6 +59,9 @@
             transform: translate(0, 0);
             font-size: 40px;
             letter-spacing: 4px;
+            /* Disable mask on subpages */
+            -webkit-mask-image: none;
+            mask-image: none;
         }
 
         #page-logo:hover {
@@ -367,7 +370,7 @@
         }
 
         #about {
-            background: #08080e;
+            /* background: #08080e; Removed to show particles */
             position: relative;
         }
 
@@ -390,7 +393,8 @@
             text-align: center;
             scrollbar-width: thin;
             scrollbar-color: #444 transparent;
-            background: #000;
+            /* background: #000; Removed to show particles */
+            /* Ensure text is readable against particles/gradient */
         }
 
         .page-section::-webkit-scrollbar {
