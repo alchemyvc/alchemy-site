@@ -1289,83 +1289,29 @@
         const GRAVITY_STRENGTH = 0.003; // Força da gravidade (super lenta)
 
         class Particle {
-            constructor(x, y, letter = null, letterIndex = null) {
+            constructor(x, y) {
                 this.x = x;
                 this.y = y;
                 this.baseX = x;
                 this.baseY = y;
                 this.size = Math.random() * 0.6 + 0.5;
                 this.density = (Math.random() * 10) + 5;
-                this.letter = letter; // Letra a qual esta partícula pertence (null = fundo)
-                this.letterIndex = letterIndex; // Index for localized effects
-
-                // Sistema de desprendimento
-                this.isFalling = false;
-                this.fallVelocityX = 0;
-                this.fallVelocityY = 0;
-                this.detachTimer = Math.random() * 4000 + 300; // 30% mais espaçado
-                this.fallAlpha = 1; // Opacidade durante a queda
+                // Removed letter-specific properties
             }
             update() {
-                if (this.letter && !this.isFalling) {
-                    // Partícula ainda presa ao título
-                    const dx = mouse.x - this.x;
-                    const dy = mouse.y - this.y;
-                    const distSq = dx * dx + dy * dy;
+                // Determine behavior based on mouse proximity (standard repulsion)
+                const dx = mouse.x - this.x;
+                const dy = mouse.y - this.y;
+                const distSq = dx * dx + dy * dy;
 
-                    if (distSq < mouseRadiusSq) {
-                        const dist = Math.sqrt(distSq);
-                        const force = (mouse.radius - dist) / mouse.radius;
-                        this.x -= (dx / dist) * force * this.density;
-                        this.y -= (dy / dist) * force * this.density;
-                    } else {
-                        this.x += (this.baseX - this.x) * 0.1;
-                        this.y += (this.baseY - this.y) * 0.1;
-                    }
-
-                    // Contador para desprender
-                    this.detachTimer--;
-                    if (this.detachTimer <= 0) {
-                        this.isFalling = true;
-                        this.fallVelocityX = Math.random() * 0.02;
-                        this.fallVelocityY = (Math.random() - 0.5) * 0.01;
-                    }
-                } else if (this.letter && this.isFalling) {
-                    // Partícula caindo/sendo puxada pela gravidade (câmera lenta)
-                    this.fallVelocityX += GRAVITY_STRENGTH;
-                    this.fallVelocityY += (Math.random() - 0.5) * 0.002; // Variação vertical mínima
-
-                    this.x += this.fallVelocityX;
-                    this.y += this.fallVelocityY;
-
-                    // Fade out super gradual
-                    this.fallAlpha -= 0.0002;
-
-                    // Se sair da tela ou ficar invisível, recria na posição original
-                    if (this.x > window.innerWidth + 50 || this.fallAlpha <= 0) {
-                        this.x = this.baseX;
-                        this.y = this.baseY;
-                        this.isFalling = false;
-                        this.fallVelocityX = 0;
-                        this.fallVelocityY = 0;
-                        this.fallAlpha = 1;
-                        this.detachTimer = Math.random() * 6500 + 650;
-                    }
+                if (distSq < mouseRadiusSq) {
+                    const dist = Math.sqrt(distSq);
+                    const force = (mouse.radius - dist) / mouse.radius;
+                    this.x -= (dx / dist) * force * this.density;
+                    this.y -= (dy / dist) * force * this.density;
                 } else {
-                    // Partículas de fundo (comportamento normal)
-                    const dx = mouse.x - this.x;
-                    const dy = mouse.y - this.y;
-                    const distSq = dx * dx + dy * dy;
-
-                    if (distSq < mouseRadiusSq) {
-                        const dist = Math.sqrt(distSq);
-                        const force = (mouse.radius - dist) / mouse.radius;
-                        this.x -= (dx / dist) * force * this.density;
-                        this.y -= (dy / dist) * force * this.density;
-                    } else {
-                        this.x += (this.baseX - this.x) * 0.1;
-                        this.y += (this.baseY - this.y) * 0.1;
-                    }
+                    this.x += (this.baseX - this.x) * 0.1;
+                    this.y += (this.baseY - this.y) * 0.1;
                 }
             }
         }
@@ -1379,69 +1325,25 @@
 
             if (isHome) {
                 const fontSize = Math.min(window.innerWidth / 7, 120);
-                const centerY = window.innerHeight / 2;
 
+                // Only needed for consistent sizing, no longer for particle scanning
                 ctx.font = `900 ${fontSize}px Montserrat`;
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
 
-                // Medir a largura total do texto para calcular posições
-                const fullText = 'ALCHEMY';
-                const fullWidth = ctx.measureText(fullText).width;
-                const startX = (window.innerWidth - fullWidth) / 2;
-
-                const width4 = canvas.width * 4;
-                const baseStep = Math.round(1.7 * dpr);
-
-                // Create spans for localized opacity control
-                pageLogo.innerHTML = fullText.split('').map(char => `<span style="transition: opacity 0.1s">${char}</span>`).join('');
-
-                // Desenhar e capturar cada letra separadamente
-                // Use substring measurements for proper kerning alignment with CSS
-                for (let i = 0; i < fullText.length; i++) {
-                    const letter = fullText[i];
-                    const prefix = fullText.substring(0, i);
-                    const letterX = startX + ctx.measureText(prefix).width;
-
-                    // Limpar canvas e desenhar apenas esta letra
-                    ctx.clearRect(0, 0, canvas.width, canvas.height);
-                    ctx.fillStyle = 'white';
-                    ctx.textAlign = 'left';
-                    ctx.fillText(letter, letterX, centerY);
-
-                    // Capturar pixels desta letra
-                    const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
-
-                    // Criar partículas para esta letra
-                    for (let y = 0; y < canvas.height; y += baseStep) {
-                        const yOffset = y * width4;
-                        for (let x = 0; x < canvas.width; x += baseStep) {
-                            if (data[yOffset + (x * 4) + 3] > 100) {
-                                // Pass index i to Particle
-                                particlesArray.push(new Particle(x / dpr, y / dpr, titleLetters[i], i));
-                            }
-                        }
-                    }
+                // We don't need to scan text or create spans anymore
+                // Just let CSS handle the logo text
+                // Clean up any previous spans if present (reset to text)
+                if (pageLogo.children.length > 0) {
+                    pageLogo.innerText = 'ALCHEMY';
                 }
+            }
 
-                ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-                // Adiciona partículas de fundo na Home também
-                for (let i = 0; i < 150; i++) {
-                    let p = new Particle(0, 0, null);
-                    p.x = Math.random() * window.innerWidth;
-                    p.y = Math.random() * window.innerHeight;
-                    p.baseX = p.x; p.baseY = p.y;
-                    particlesArray.push(p);
-                }
-            } else {
-                for (let i = 0; i < 150; i++) {
-                    let p = new Particle(0, 0, null);
-                    p.x = Math.random() * window.innerWidth;
-                    p.y = Math.random() * window.innerHeight;
-                    p.baseX = p.x; p.baseY = p.y;
-                    particlesArray.push(p);
-                }
+            // Unify particle generation: Always create ~200 background particles
+            // Spread them across the entire screen
+            const particleCount = 200;
+            for (let i = 0; i < particleCount; i++) {
+                let x = Math.random() * window.innerWidth;
+                let y = Math.random() * window.innerHeight;
+                particlesArray.push(new Particle(x, y));
             }
         }
 
@@ -1457,53 +1359,20 @@
 
 
             const len = particlesArray.length;
-            // Track how much particles are disturbed per letter
-            // letters: A, L, C, H, E, M, Y (indexes 0-6)
-            let letterChaos = {}; // { 0: count, 1: count ... }
 
-            // Primeiro desenhar partículas normais (não iluminadas e não caindo)
+            // Draw background particles
             ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
             ctx.beginPath();
             for (let i = 0; i < len; i++) {
                 const p = particlesArray[i];
                 p.update();
-
-                // Calculate localized chaos
-                if (p.letterIndex !== null && p.letterIndex !== undefined) {
-                    const dx = p.x - p.originX;
-                    const dy = p.y - p.originY;
-                    const distSq = dx * dx + dy * dy;
-                    if (distSq > 4 || p.isFalling) {
-                        letterChaos[p.letterIndex] = (letterChaos[p.letterIndex] || 0) + 1;
-                    }
-                }
-
-                if ((!p.letter || !litLetters.has(p.letter)) && !p.isFalling) {
-                    ctx.rect(p.x, p.y, p.size, p.size);
-                }
+                // Simple rect drawing for lightweight feel
+                ctx.rect(p.x, p.y, p.size, p.size);
             }
             ctx.fill();
 
             // (Localized opacity logic removed in favor of CSS Mask)
             // The CSS mask handles the "invisibility" at cursor position directly.
-
-            // Desenhar partículas caindo (transição de branco/prata para dourado)
-            for (let i = 0; i < len; i++) {
-                const p = particlesArray[i];
-                if (p.isFalling) {
-                    // Calcular progresso da transformação (0 = início, 1 = totalmente dourado)
-                    // Transição mais rápida para dourado
-                    const goldProgress = Math.min(1, (1 - p.fallAlpha) * 4);
-
-                    // Interpolar de branco (255, 255, 255) para dourado intenso (255, 180, 0)
-                    const r = 255;
-                    const g = Math.round(255 - (75 * goldProgress)); // 255 -> 180
-                    const b = Math.round(255 - (255 * goldProgress)); // 255 -> 0
-
-                    ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${Math.min(1, p.fallAlpha * 1.2)})`;
-                    ctx.fillRect(p.x, p.y, p.size, p.size);
-                }
-            }
 
             // Depois desenhar partículas iluminadas com brilho
             if (litLetters.size > 0) {
