@@ -1426,50 +1426,7 @@
             }
         }
 
-        // --- STARDUST CURSOR TRAIL ---
-        let stardustArray = [];
-        const STARDUST_COLOR = 'rgba(255, 255, 255, '; // base for varied opacity
-
-        class StardustParticle {
-            constructor(x, y) {
-                this.x = x;
-                this.y = y;
-                this.size = Math.random() * 1.5 + 0.5; // Tiny particles
-                this.speedX = Math.random() * 1 - 0.5; // Slow drift
-                this.speedY = Math.random() * 1 - 0.5;
-                this.life = 1.0; // Opacity start
-                this.decay = Math.random() * 0.01 + 0.005; // Fade speed
-            }
-            update() {
-                this.x += this.speedX;
-                this.y += this.speedY;
-                this.life -= this.decay;
-            }
-            draw() {
-                ctx.fillStyle = STARDUST_COLOR + this.life + ')';
-                ctx.beginPath();
-                ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
-                ctx.fill();
-            }
-        }
-
-        function handleStardust() {
-            // Add new particles at mouse position
-            if (mouse.x && mouse.y) {
-                for (let i = 0; i < 2; i++) { // Spawn rate
-                    stardustArray.push(new StardustParticle(mouse.x, mouse.y));
-                }
-            }
-            // Update and draw existing particles
-            for (let i = 0; i < stardustArray.length; i++) {
-                stardustArray[i].update();
-                stardustArray[i].draw();
-                if (stardustArray[i].life <= 0) {
-                    stardustArray.splice(i, 1);
-                    i--;
-                }
-            }
-        }
+        // Modified update logic for main particles...
 
         // Modified update logic for main particles...
         /* (The rest of Particle class remains mostly same, just ensuring this sits alongside) */
@@ -1478,7 +1435,7 @@
             ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
 
             // Draw Stardust first (background layer)
-            handleStardust();
+
 
             const len = particlesArray.length;
 
