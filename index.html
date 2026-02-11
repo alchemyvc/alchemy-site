@@ -1335,8 +1335,11 @@
                 ctx.textBaseline = 'middle';
 
                 // Sync logo font size before measuring its rendered width
+                // Temporarily disable transition to get accurate measurements (not mid-animation)
                 if (!pageLogo.classList.contains('subpage')) {
+                    pageLogo.style.transition = 'none';
                     pageLogo.style.fontSize = `${fontSize}px`;
+                    void pageLogo.offsetWidth; // Force reflow with new font size
                 }
 
                 const fullText = 'ALCHEMY';
@@ -1348,6 +1351,11 @@
                 const cssTextWidth = pageLogo.getBoundingClientRect().width;
                 const startX = (window.innerWidth - cssTextWidth) / 2;
                 const scale = cssTextWidth / canvasTextWidth;
+
+                // Re-enable transition
+                if (!pageLogo.classList.contains('subpage')) {
+                    pageLogo.style.transition = '';
+                }
 
                 const width4 = canvas.width * 4;
                 const baseStep = Math.round(1.7 * dpr);
