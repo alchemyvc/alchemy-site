@@ -1334,10 +1334,20 @@
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'middle';
 
-                // Medir a largura total do texto para calcular posições
+                // Sync logo font size before measuring its rendered width
+                if (!pageLogo.classList.contains('subpage')) {
+                    pageLogo.style.fontSize = `${fontSize}px`;
+                }
+
                 const fullText = 'ALCHEMY';
-                const fullWidth = ctx.measureText(fullText).width;
-                const startX = (window.innerWidth - fullWidth) / 2;
+                const canvasTextWidth = ctx.measureText(fullText).width;
+
+                // Use the CSS logo element's actual rendered width for centering
+                // This ensures pixel-perfect alignment across devices (Canvas and CSS
+                // text shaping engines can produce slightly different widths on mobile)
+                const cssTextWidth = pageLogo.getBoundingClientRect().width;
+                const startX = (window.innerWidth - cssTextWidth) / 2;
+                const scale = cssTextWidth / canvasTextWidth;
 
                 const width4 = canvas.width * 4;
                 const baseStep = Math.round(1.7 * dpr);
@@ -1347,7 +1357,7 @@
                 for (let i = 0; i < fullText.length; i++) {
                     const letter = fullText[i];
                     const prefix = fullText.substring(0, i);
-                    const letterX = startX + ctx.measureText(prefix).width;
+                    const letterX = startX + ctx.measureText(prefix).width * scale;
 
                     // Limpar canvas e desenhar apenas esta letra
                     ctx.clearRect(0, 0, canvas.width, canvas.height);
