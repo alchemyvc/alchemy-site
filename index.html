@@ -671,7 +671,6 @@
     </section>
 
     <section id="about" class="page-section">
-        <canvas id="bio-canvas"></canvas>
         <div class="bio-container">
             <h2>Bio</h2>
             <p class="bio-text">Alchemy is the collaboration between Andi P and Mr Tie: mad scientists of sound and
@@ -1156,13 +1155,6 @@
             subMenus.classList.remove('active');
             menuTrigger.textContent = 'Menu';
             init();
-
-            // Bio background animation
-            if (pageId === 'about') {
-                startBioAnimation();
-            } else {
-                stopBioAnimation();
-            }
         }
 
         menuTrigger.addEventListener('click', () => {
@@ -1551,98 +1543,9 @@
         }
 
         document.fonts.ready.then(() => { init(); adjustSymbolsGap(); animate(); });
-        window.addEventListener('resize', () => { init(); adjustSymbolsGap(); bioResize(); });
+        window.addEventListener('resize', () => { init(); adjustSymbolsGap(); });
 
-        // --- BIO BACKGROUND PARTICLE SYSTEM ---
-        const bioCanvas = document.getElementById('bio-canvas');
-        const bioCtx = bioCanvas.getContext('2d');
-        let bioW, bioH;
-        let bioParticles = [];
-        const BIO_NUM = 80;
-        let bioTime = 0;
-        let bioAnimId = null;
-        const bioHues = [35, 40, 28, 45, 30];
 
-        function bioResize() {
-            bioW = bioCanvas.width = window.innerWidth;
-            bioH = bioCanvas.height = window.innerHeight;
-            bioCtx.fillStyle = '#08080e';
-            bioCtx.fillRect(0, 0, bioW, bioH);
-        }
-
-        class BioParticle {
-            constructor() { this.reset(); }
-            reset() {
-                this.x = Math.random() * (bioW || window.innerWidth);
-                this.y = Math.random() * (bioH || window.innerHeight);
-                this.angle = Math.random() * Math.PI * 2;
-                this.speed = 0.15 + Math.random() * 0.25;
-                this.life = 0;
-                this.maxLife = 600 + Math.random() * 1200;
-                this.hue = bioHues[Math.floor(Math.random() * bioHues.length)];
-                this.sat = 30 + Math.random() * 25;
-                this.lightness = 55 + Math.random() * 20;
-                this.size = 0.5 + Math.random() * 1;
-                this.fx = 0.0003 + Math.random() * 0.0008;
-                this.fy = 0.0004 + Math.random() * 0.0007;
-                this.phase = Math.random() * 1000;
-            }
-            update() {
-                this.life++;
-                if (this.life > this.maxLife || this.x < -20 || this.x > bioW + 20 || this.y < -20 || this.y > bioH + 20) {
-                    this.reset();
-                }
-                const t = bioTime + this.phase;
-                this.angle += Math.sin(t * this.fx) * 0.015 + Math.cos(t * this.fy * 0.7) * 0.01;
-                this.x += Math.cos(this.angle) * this.speed;
-                this.y += Math.sin(this.angle) * this.speed;
-            }
-            draw() {
-                const lifeRatio = this.life / this.maxLife;
-                const fade = lifeRatio < 0.1 ? lifeRatio / 0.1
-                    : lifeRatio > 0.8 ? (1 - lifeRatio) / 0.2
-                        : 1;
-                const alpha = fade * 0.12;
-                bioCtx.beginPath();
-                bioCtx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
-                bioCtx.fillStyle = `hsla(${this.hue}, ${this.sat}%, ${this.lightness}%, ${alpha})`;
-                bioCtx.fill();
-            }
-        }
-
-        function initBioParticles() {
-            bioParticles = [];
-            for (let i = 0; i < BIO_NUM; i++) {
-                const p = new BioParticle();
-                p.life = Math.floor(Math.random() * p.maxLife);
-                bioParticles.push(p);
-            }
-        }
-
-        function bioFrame() {
-            bioTime++;
-            bioCtx.fillStyle = 'rgba(8, 8, 14, 0.012)';
-            bioCtx.fillRect(0, 0, bioW, bioH);
-            for (const p of bioParticles) {
-                p.update();
-                p.draw();
-            }
-            bioAnimId = requestAnimationFrame(bioFrame);
-        }
-
-        function startBioAnimation() {
-            if (bioAnimId) return;
-            bioResize();
-            if (bioParticles.length === 0) initBioParticles();
-            bioFrame();
-        }
-
-        function stopBioAnimation() {
-            if (bioAnimId) {
-                cancelAnimationFrame(bioAnimId);
-                bioAnimId = null;
-            }
-        }
     </script>
 </body>
 
