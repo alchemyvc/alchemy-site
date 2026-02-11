@@ -48,6 +48,9 @@
             color: transparent;
             -webkit-text-stroke: 1px rgba(255, 255, 255, 0.7);
             user-select: none;
+            /* Cursor Mask: Creates a hole where the mouse is */
+            -webkit-mask-image: radial-gradient(circle 80px at var(--mask-x, -500%) var(--mask-y, -500%), transparent 0%, transparent 40%, black 80%);
+            mask-image: radial-gradient(circle 80px at var(--mask-x, -500%) var(--mask-y, -500%), transparent 0%, transparent 40%, black 80%);
         }
 
         #page-logo.subpage {
@@ -1266,6 +1269,17 @@
             } else { lastMouseMoveTime = Date.now(); }
             lastMousePos.x = e.x; lastMousePos.y = e.y;
             mouse.x = e.x; mouse.y = e.y;
+
+            // Update mask coordinates for #page-logo
+            const logo = document.getElementById('page-logo');
+            if (logo) {
+                const rect = logo.getBoundingClientRect();
+                const x = e.clientX - rect.left;
+                const y = e.clientY - rect.top;
+                logo.style.setProperty('--mask-x', `${x}px`);
+                logo.style.setProperty('--mask-y', `${y}px`);
+            }
+
             playNote();
         });
 
@@ -1470,28 +1484,8 @@
             }
             ctx.fill();
 
-            // Localized Interactive Logo Opacity Logic
-            // Update each span separately
-            if (!pageLogo.classList.contains('subpage') && pageLogo.children.length > 0) {
-                const spans = pageLogo.children;
-                // Estimate particles per letter approx
-                const approxParticlesPerLetter = len / 7;
-                const maxChaosPerLetter = approxParticlesPerLetter * 0.15; // 15% threshold
-
-                for (let i = 0; i < spans.length; i++) {
-                    const chaosCount = letterChaos[i] || 0;
-                    const chaosRatio = Math.min(1, chaosCount / maxChaosPerLetter);
-                    const targetOpacity = 1 - (chaosRatio * 0.9); // Min opacity 0.1
-
-                    // Apply to span
-                    // We can reuse the span's current opacity for smoother lerp if needed, 
-                    // or just rely on the chaos calculation which is inherently smooth-ish
-                    // JS lerp for smoothness
-                    const currentOpacity = parseFloat(spans[i].style.opacity) || 1;
-                    const newOpacity = currentOpacity + (targetOpacity - currentOpacity) * 0.1;
-                    spans[i].style.opacity = newOpacity.toFixed(3);
-                }
-            }
+            // (Localized opacity logic removed in favor of CSS Mask)
+            // The CSS mask handles the "invisibility" at cursor position directly.
 
             // Desenhar partículas caindo (transição de branco/prata para dourado)
             for (let i = 0; i < len; i++) {
