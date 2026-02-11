@@ -1438,6 +1438,7 @@
 
 
             const len = particlesArray.length;
+            let chaosLevel = 0; // Track how much particles are disturbed
 
             // Primeiro desenhar partículas normais (não iluminadas e não caindo)
             ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
@@ -1445,11 +1446,37 @@
             for (let i = 0; i < len; i++) {
                 const p = particlesArray[i];
                 p.update();
+
+                // Calculate chaos: if particle is far from origin or moving fast
+                const dx = p.x - p.originX;
+                const dy = p.y - p.originY;
+                const distSq = dx * dx + dy * dy;
+                // If displaced significanty (> 4px squared) or falling, contribute to chaos
+                if (distSq > 4 || p.isFalling) {
+                    chaosLevel += 1;
+                }
+
                 if ((!p.letter || !litLetters.has(p.letter)) && !p.isFalling) {
                     ctx.rect(p.x, p.y, p.size, p.size);
                 }
             }
             ctx.fill();
+
+            // Interactive Logo Opacity Logic
+            // Calculate target opacity based on chaos ratio
+            // More chaos = less opacity (visual "magic": structure dissolves into sand)
+            const maxChaos = len * 0.15; // 15% of particles moving is "max chaos"
+            const chaosRatio = Math.min(1, chaosLevel / maxChaos);
+            const targetOpacity = 1 - (chaosRatio * 0.85); // Min opacity 0.15
+
+            // Smooth transition for opacity
+            if (!pageLogo.classList.contains('subpage')) {
+                const computedStyle = window.getComputedStyle(pageLogo);
+                const currentOpacity = parseFloat(computedStyle.opacity) || 1;
+                // Lerp towards target
+                const newOpacity = currentOpacity + (targetOpacity - currentOpacity) * 0.1;
+                pageLogo.style.opacity = newOpacity.toFixed(3);
+            }
 
             // Desenhar partículas caindo (transição de branco/prata para dourado)
             for (let i = 0; i < len; i++) {
