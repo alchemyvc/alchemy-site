@@ -64,6 +64,10 @@
             mask-image: none;
         }
 
+        .no-transition {
+            transition: none !important;
+        }
+
         #page-logo:hover {
             -webkit-text-stroke: 1px #fff;
             color: rgba(255, 255, 255, 0.1);
@@ -1144,7 +1148,13 @@
             if (isHome) {
                 document.body.classList.remove('not-home');
                 socialNav.classList.remove('hidden');
+
+                // Snap logo back to center without animation
+                pageLogo.classList.add('no-transition');
                 pageLogo.classList.remove('subpage');
+                void pageLogo.offsetWidth; // Force reflow
+                setTimeout(() => pageLogo.classList.remove('no-transition'), 50);
+
                 pageLogo.style.fontSize = '';  // restore to CSS default, adjustSymbolsGap will set it
             } else {
                 document.body.classList.add('not-home');
