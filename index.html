@@ -1275,7 +1275,7 @@
         const GRAVITY_STRENGTH = 0.003; // Força da gravidade (super lenta)
 
         class Particle {
-            constructor(x, y, letter = null) {
+            constructor(x, y, letter = null, letterIndex = null) {
                 this.x = x;
                 this.y = y;
                 this.baseX = x;
@@ -1283,6 +1283,7 @@
                 this.size = Math.random() * 0.6 + 0.5;
                 this.density = (Math.random() * 10) + 5;
                 this.letter = letter; // Letra a qual esta partícula pertence (null = fundo)
+                this.letterIndex = letterIndex; // Index for localized effects
 
                 // Sistema de desprendimento
                 this.isFalling = false;
@@ -1378,6 +1379,9 @@
                 const width4 = canvas.width * 4;
                 const baseStep = Math.round(1.7 * dpr);
 
+                // Create spans for localized opacity control
+                pageLogo.innerHTML = fullText.split('').map(char => `<span style="transition: opacity 0.1s">${char}</span>`).join('');
+
                 // Desenhar e capturar cada letra separadamente
                 // Use substring measurements for proper kerning alignment with CSS
                 for (let i = 0; i < fullText.length; i++) {
@@ -1399,7 +1403,8 @@
                         const yOffset = y * width4;
                         for (let x = 0; x < canvas.width; x += baseStep) {
                             if (data[yOffset + (x * 4) + 3] > 100) {
-                                particlesArray.push(new Particle(x / dpr, y / dpr, titleLetters[i]));
+                                // Pass index i to Particle
+                                particlesArray.push(new Particle(x / dpr, y / dpr, titleLetters[i], i));
                             }
                         }
                     }
@@ -1438,7 +1443,9 @@
 
 
             const len = particlesArray.length;
-            let chaosLevel = 0; // Track how much particles are disturbed
+            // Track how much particles are disturbed per letter
+            // letters: A, L, C, H, E, M, Y (indexes 0-6)
+            let letterChaos = {}; // { 0: count, 1: count ... }
 
             // Primeiro desenhar partículas normais (não iluminadas e não caindo)
             ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
@@ -1447,13 +1454,14 @@
                 const p = particlesArray[i];
                 p.update();
 
-                // Calculate chaos: if particle is far from origin or moving fast
-                const dx = p.x - p.originX;
-                const dy = p.y - p.originY;
-                const distSq = dx * dx + dy * dy;
-                // If displaced significanty (> 4px squared) or falling, contribute to chaos
-                if (distSq > 4 || p.isFalling) {
-                    chaosLevel += 1;
+                // Calculate localized chaos
+                if (p.letterIndex !== null && p.letterIndex !== undefined) {
+                    const dx = p.x - p.originX;
+                    const dy = p.y - p.originY;
+                    const distSq = dx * dx + dy * dy;
+                    if (distSq > 4 || p.isFalling) {
+                        letterChaos[p.letterIndex] = (letterChaos[p.letterIndex] || 0) + 1;
+                    }
                 }
 
                 if ((!p.letter || !litLetters.has(p.letter)) && !p.isFalling) {
@@ -1462,20 +1470,27 @@
             }
             ctx.fill();
 
-            // Interactive Logo Opacity Logic
-            // Calculate target opacity based on chaos ratio
-            // More chaos = less opacity (visual "magic": structure dissolves into sand)
-            const maxChaos = len * 0.15; // 15% of particles moving is "max chaos"
-            const chaosRatio = Math.min(1, chaosLevel / maxChaos);
-            const targetOpacity = 1 - (chaosRatio * 0.85); // Min opacity 0.15
+            // Localized Interactive Logo Opacity Logic
+            // Update each span separately
+            if (!pageLogo.classList.contains('subpage') && pageLogo.children.length > 0) {
+                const spans = pageLogo.children;
+                // Estimate particles per letter approx
+                const approxParticlesPerLetter = len / 7;
+                const maxChaosPerLetter = approxParticlesPerLetter * 0.15; // 15% threshold
 
-            // Smooth transition for opacity
-            if (!pageLogo.classList.contains('subpage')) {
-                const computedStyle = window.getComputedStyle(pageLogo);
-                const currentOpacity = parseFloat(computedStyle.opacity) || 1;
-                // Lerp towards target
-                const newOpacity = currentOpacity + (targetOpacity - currentOpacity) * 0.1;
-                pageLogo.style.opacity = newOpacity.toFixed(3);
+                for (let i = 0; i < spans.length; i++) {
+                    const chaosCount = letterChaos[i] || 0;
+                    const chaosRatio = Math.min(1, chaosCount / maxChaosPerLetter);
+                    const targetOpacity = 1 - (chaosRatio * 0.9); // Min opacity 0.1
+
+                    // Apply to span
+                    // We can reuse the span's current opacity for smoother lerp if needed, 
+                    // or just rely on the chaos calculation which is inherently smooth-ish
+                    // JS lerp for smoothness
+                    const currentOpacity = parseFloat(spans[i].style.opacity) || 1;
+                    const newOpacity = currentOpacity + (targetOpacity - currentOpacity) * 0.1;
+                    spans[i].style.opacity = newOpacity.toFixed(3);
+                }
             }
 
             // Desenhar partículas caindo (transição de branco/prata para dourado)
