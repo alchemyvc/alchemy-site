@@ -19,6 +19,8 @@
             font-family: 'Montserrat', sans-serif;
             height: 100vh;
             color: white;
+            -webkit-user-select: none;
+            user-select: none;
         }
 
         canvas {
@@ -113,6 +115,9 @@
             color: white;
             /* Add floating animation */
             animation: float-symbol 6s ease-in-out infinite;
+            -webkit-tap-highlight-color: transparent;
+            -webkit-user-select: none;
+            user-select: none;
         }
 
         /* Stagger animation delays for organic feel */
@@ -359,6 +364,28 @@
 
             #page-logo {
                 top: calc(50% - 3px);
+            }
+
+            /* Scale symbols to fit mobile */
+            .alchemy-icon {
+                width: 50px;
+                height: 50px;
+            }
+
+            #alchemy-symbols {
+                gap: 24px;
+            }
+
+            /* Fix bottom nav overlap on mobile */
+            #social-nav {
+                bottom: 30px;
+                left: 30px;
+                gap: 15px;
+            }
+
+            #main-nav {
+                bottom: 30px;
+                right: 20px;
             }
         }
 
@@ -1132,13 +1159,22 @@
             if (!isHome) return;
             if (!audioCtx || audioCtx.state !== 'running') return;
 
-            const section = Math.floor((mouse.x / window.innerWidth) * 7);
-            let hit = mouse.y > (window.innerHeight / 3) - 150 && mouse.y < (window.innerHeight / 3) + 200;
+            // Only trigger when touching directly on the text
+            const logoRect = pageLogo.getBoundingClientRect();
+            const inYRange = mouse.y >= logoRect.top && mouse.y <= logoRect.bottom;
 
-            if (hit && section !== lastPlayedIndex) {
+            if (!inYRange) { lastPlayedIndex = -1; return; }
+
+            // Map touch/mouse X to letter index based on actual logo position
+            const relX = mouse.x - logoRect.left;
+            const section = Math.floor((relX / logoRect.width) * 7);
+
+            if (section >= 0 && section < 7 && section !== lastPlayedIndex) {
                 const freq = fSharpPentatonic[section % 7] * Math.pow(2, octaveShift);
                 playFMSound(freq, audioCtx.currentTime, 1.2);
                 lastPlayedIndex = section;
+            } else if (section < 0 || section >= 7) {
+                lastPlayedIndex = -1;
             }
         }
 
@@ -1290,6 +1326,38 @@
             playNote();
         });
 
+        // Touch support for mobile
+        function handleTouch(e) {
+            const touch = e.touches[0];
+            if (!touch) return;
+
+            // Don't preventDefault on interactive elements — let their click/tap events fire
+            const target = e.target;
+            const isInteractive = target.closest('.alchemy-icon, #main-nav, #social-nav, .menu-item, #menu-trigger, .social-link, a');
+            if (isHome && !isInteractive) e.preventDefault();
+
+            if (audioCtx.state === 'suspended') { audioCtx.resume().catch(() => { }); }
+            mouse.x = touch.clientX;
+            mouse.y = touch.clientY;
+            lastMousePos.x = touch.clientX;
+            lastMousePos.y = touch.clientY;
+            lastMouseMoveTime = Date.now();
+            const logo = document.getElementById('page-logo');
+            if (logo) {
+                const rect = logo.getBoundingClientRect();
+                logo.style.setProperty('--mask-x', `${touch.clientX - rect.left}px`);
+                logo.style.setProperty('--mask-y', `${touch.clientY - rect.top}px`);
+            }
+            playNote();
+        }
+        window.addEventListener('touchstart', handleTouch, { passive: false });
+        window.addEventListener('touchmove', handleTouch, { passive: false });
+        window.addEventListener('touchend', () => {
+            mouse.x = -500; mouse.y = -500;
+            const logo = document.getElementById('page-logo');
+            if (logo) { logo.style.setProperty('--mask-x', '-500%'); logo.style.setProperty('--mask-y', '-500%'); }
+        });
+
         const mouseRadiusSq = 2401;
 
         // Gravidade lateral (puxa para a direita) - câmera lenta
@@ -1340,12 +1408,9 @@
                 } else if (this.letter && this.isFalling) {
                     // Partícula caindo/sendo puxada pela gravidade (câmera lenta)
                     this.fallVelocityX += GRAVITY_STRENGTH;
-                    this.fallVelocityY += (Math.random() - 0.5) * 0.002; // Variação vertical mínima
-
+                    this.fallVelocityY += (Math.random() - 0.5) * 0.002;
                     this.x += this.fallVelocityX;
                     this.y += this.fallVelocityY;
-
-                    // Fade out super gradual
                     this.fallAlpha -= 0.0002;
 
                     // Se sair da tela ou ficar invisível, recria na posição original
@@ -1477,8 +1542,8 @@
 
                 // Calculate localized chaos
                 if (p.letterIndex !== null && p.letterIndex !== undefined) {
-                    const dx = p.x - p.originX;
-                    const dy = p.y - p.originY;
+                    const dx = p.x - p.baseX;
+                    const dy = p.y - p.baseY;
                     const distSq = dx * dx + dy * dy;
                     if (distSq > 4 || p.isFalling) {
                         letterChaos[p.letterIndex] = (letterChaos[p.letterIndex] || 0) + 1;
