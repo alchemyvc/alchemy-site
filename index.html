@@ -1205,6 +1205,7 @@
             if (!isHome) document.getElementById(pageId).classList.add('active');
             subMenus.classList.remove('active');
             menuTrigger.textContent = 'Menu';
+            if (isHome) adjustSymbolsGap();
             init();
         }
 
