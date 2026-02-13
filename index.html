@@ -1229,18 +1229,7 @@
                 togglePad(element);
             });
 
-            // Som ao passar o mouse por cima
-            icon.addEventListener('mouseenter', () => {
-                if (!isHome) return;
-                if (audioCtx.state === 'suspended') audioCtx.resume();
 
-                const element = icon.getAttribute('data-element');
-                const chordNotes = chords[element];
-                if (chordNotes && audioCtx.state === 'running') {
-                    // Tocar uma nota suave do acorde correspondente
-                    playFMSound(chordNotes[0] * 2, audioCtx.currentTime, 0.8);
-                }
-            });
         });
 
         // Event listener para teclado (teclas 1-4 para elementos, A-L-C-H-E-M-Y para notas, espaço para modo auto)
