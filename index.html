@@ -213,52 +213,79 @@
         /* MENU PRINCIPAL */
         #main-nav {
             position: fixed;
-            bottom: 50px;
-            right: 50px;
+            top: 75%;
+            left: 50%;
+            transform: translate(-50%, -50%);
             z-index: 100;
+            text-align: center;
+            transition: all 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        #main-nav.subpage {
+            top: auto;
+            bottom: 50px;
+            left: auto;
+            right: 50px;
+            transform: none;
             text-align: right;
+            align-items: flex-end;
         }
 
         #menu-trigger {
             background: none;
             border: none;
-            color: rgba(255, 255, 255, 0.4);
+            color: white;
             font-family: 'Montserrat', sans-serif;
-            font-weight: 300;
-            font-size: 0.7rem;
-            letter-spacing: 5px;
+            font-weight: 900;
+            font-size: 46px;
+            letter-spacing: 2px;
             cursor: pointer;
             transition: 0.3s;
             text-transform: uppercase;
             padding: 10px;
+            opacity: 0.6;
+            order: 1;
         }
 
         #menu-trigger:hover {
-            color: white;
-            letter-spacing: 8px;
+            opacity: 1;
+            letter-spacing: 5px;
+        }
+
+        /* When sub-menu is open, push Close button below the items */
+        .sub-menu.active~#menu-trigger {
+            order: 3;
+            font-size: 1.2rem;
+            font-weight: 300;
+            letter-spacing: 5px;
+            position: absolute;
+            top: 100%;
+            left: 50%;
+            transform: translateX(-50%);
+            margin-top: 10px;
         }
 
         .sub-menu {
-            display: flex;
+            display: none;
             flex-direction: column;
-            gap: 15px;
-            margin-bottom: 20px;
-            opacity: 0;
-            visibility: hidden;
-            transform: translateY(10px);
-            transition: all 0.4s cubic-bezier(0.165, 0.84, 0.44, 1);
+            align-items: center;
+            gap: 12px;
+            margin-top: 0;
+            order: 2;
         }
 
         .sub-menu.active {
-            opacity: 1;
-            visibility: visible;
-            transform: translateY(0);
+            display: flex;
+            animation: fadeIn 0.4s ease forwards;
         }
 
         .menu-item {
             color: white;
             text-decoration: none;
-            font-size: 1.2rem;
+            font-size: 1.6rem;
             font-weight: 900;
             letter-spacing: 2px;
             text-transform: uppercase;
@@ -384,6 +411,10 @@
             }
 
             #main-nav {
+                top: 78%;
+            }
+
+            #main-nav.subpage {
                 bottom: 30px;
                 right: 20px;
             }
@@ -624,9 +655,9 @@
 
     <nav id="main-nav">
         <div class="sub-menu" id="subMenus">
-            <div class="menu-item" onclick="showPage('home')">Home</div>
             <div class="menu-item" onclick="showPage('art')">Art</div>
             <div class="menu-item" onclick="showPage('about')">About</div>
+            <div class="menu-item" onclick="showPage('home')">Home</div>
         </div>
         <button id="menu-trigger">Menu</button>
     </nav>
@@ -1190,6 +1221,7 @@
                 // Snap logo back to center without animation
                 pageLogo.classList.add('no-transition');
                 pageLogo.classList.remove('subpage');
+                document.getElementById('main-nav').classList.remove('subpage');
                 void pageLogo.offsetWidth; // Force reflow
                 setTimeout(() => pageLogo.classList.remove('no-transition'), 50);
 
@@ -1198,6 +1230,7 @@
                 document.body.classList.add('not-home');
                 socialNav.classList.add('hidden');
                 pageLogo.classList.add('subpage');
+                document.getElementById('main-nav').classList.add('subpage');
                 pageLogo.style.fontSize = '';  // let .subpage CSS handle it
                 // Para toda a música quando sai da home
                 stopAutoMode();
