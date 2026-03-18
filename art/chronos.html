@@ -1,0 +1,1674 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Fibonacci Orbital Drum Machine</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+  <style>
+  html, body {
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    background: #050608;
+    color: #eee;
+    font-family: sans-serif;
+    font-size: 12px;
+    touch-action: none; /* avoid scroll/zoom from touches */
+  }
+
+  /* No 100vh/100vw here! JS will size the canvas. */
+  #viz {
+    position: fixed;
+    inset: 0;      /* top:0; right:0; bottom:0; left:0; */
+    display: block;
+  }
+</style>
+
+</head>
+<body>
+  <canvas id="viz"></canvas>
+
+  <script>
+    const NUM_TRACKS = 5;
+    const STEPS = 21;
+    const FIB_LENGTHS = [21, 13, 8, 5, 3];
+
+    const TEMPO_MIN = 30;
+    const TEMPO_MAX = 120;
+
+    // ==== Global musical / engine params (hard-coded defaults) ====
+
+    // Density of active steps (0..1)
+    let density = 0.5;
+
+    // Global envelope
+    let envAttack = 0.001;
+    let envDecay  = 0.1;
+    let envSustain = 0.2;
+    let envRelease = 0.2;
+
+    // Global noise (all tracks)
+    let globalNoiseLevel = 0.0;
+
+    // Global volume & octave
+    let globalVolume = 0.8;
+    let globalOctave = 0;
+
+    // Log-mapping helpers: sliderVal in [0,1]
+    function bpmToSliderVal(bpm) {
+      const clamped = Math.max(TEMPO_MIN, Math.min(TEMPO_MAX, bpm));
+      const ratio = clamped / TEMPO_MIN; // 1..4
+      return 0.5 * Math.log2(ratio);     // 0..1
+    }
+
+    function sliderValToBpm(sliderVal) {
+      const v = Math.max(0, Math.min(1, sliderVal));
+      const bpmFloat = TEMPO_MIN * Math.pow(2, 2 * v); // 30*2^(2v)
+      return bpmFloat;
+    }
+
+    // Hard-coded: G major pentatonic
+    const rootNote = 7; // G
+    const scaleSet = new Set([0, 2, 4, 7, 9]);
+
+    function quantizeSemitone(rawSemi) {
+      const minSemi = -12;
+      const maxSemi = 12;
+      let best = rawSemi;
+      let bestDiff = Infinity;
+      for (let s = minSemi; s <= maxSemi; s++) {
+        const rel = ((rootNote + s) % 12 + 12) % 12;
+        if (scaleSet.has(rel)) {
+          const diff = Math.abs(s - rawSemi);
+          if (diff < bestDiff) {
+            bestDiff = diff;
+            best = s;
+            if (diff === 0) break;
+          }
+        }
+      }
+      return best;
+    }
+
+    // ---------- Global audio & FX state ----------
+    let audioCtx = null;
+    let masterBus = null;
+    let saturator = null;
+    let dryGain = null;
+    let wetGain = null;
+    let plateReverb = null;
+    let reverbHP = null;
+    let limiter = null; // soft limiter at the master output
+
+    // 15% of slider -> 0.15 * 0.25 = 0.0375 wet
+    let reverbWetValue = 0.0375;
+    // 5% drive
+    let saturationAmount = 0.05;
+    let reverbDiffAmount = 0.7;
+    let reverbSize = 5.0;
+    let reverbDecay = 1.0;
+
+    let isPlaying = false;
+    let currentStep = 0;
+    let nextNoteTime = 0;
+    let lookahead = 0.05;
+    let scheduleAheadTime = 0.1;
+    let timerID = null;
+    let bpm = 60;
+    let playStartTime = 0;
+
+    // delayed restart after random
+    let randomRestartTimeout = null;
+
+    function secondsPerStep() {
+      const beatsPerSecond = bpm / 60;
+      return 1 / (beatsPerSecond * 4);
+    }
+
+    // --- Smoother plate reverb with diffusion control ---
+    class SimplePlateReverb {
+      constructor(ctx) {
+        this.ctx = ctx;
+
+        // Public I/O
+        this.input = ctx.createGain();
+        this.output = ctx.createGain();
+        this.input.gain.value = 1.0;
+        this.output.gain.value = 1.0;
+
+        // INPUT DIFFUSERS (allpass chain)
+        this.diffIn = ctx.createGain();
+        this.diffIn.gain.value = 1.0;
+        this.input.connect(this.diffIn);
+
+        this.diffusers = [];
+        let prev = this.diffIn;
+        const diffFreqs = [600, 1200, 2500, 4000];
+
+        diffFreqs.forEach((freq) => {
+          const ap = ctx.createBiquadFilter();
+          ap.type = "allpass";
+          ap.frequency.value = freq;
+          ap.Q.value = 0.7;
+          prev.connect(ap);
+          prev = ap;
+          this.diffusers.push(ap);
+        });
+
+        this.diffuseOut = prev;
+
+        // MAIN DELAY NETWORK
+        this.size = 1.0;
+        this.decay = 0.5;
+        this.diffusion = 0.7;
+
+        this.baseDelays = [0.0187, 0.0211, 0.0253, 0.0287];
+        this.delayNodes = [];
+        this.feedbackGains = [];
+
+        for (let i = 0; i < this.baseDelays.length; i++) {
+          const delay = ctx.createDelay(2.0);
+          delay.delayTime.value = this.baseDelays[i];
+
+          const fb = ctx.createGain();
+          fb.gain.value = 0.5;
+
+          this.diffuseOut.connect(delay);
+          delay.connect(fb);
+          fb.connect(delay);
+          delay.connect(this.output);
+
+          this.delayNodes.push(delay);
+          this.feedbackGains.push(fb);
+        }
+
+        // Apply initial diffusion setting
+        this.setDiffusion(this.diffusion);
+      }
+
+      setSize(size) {
+        this.size = size;
+        for (let i = 0; i < this.delayNodes.length; i++) {
+          this.delayNodes[i].delayTime.value = this.baseDelays[i] * size;
+        }
+      }
+
+      setDecay(decay) {
+        this.decay = decay;
+        const minFb = 0.15;
+        const maxFb = 0.85;
+        const fb = minFb + (maxFb - minFb) * decay;
+        this.feedbackGains.forEach(g => g.gain.value = fb);
+      }
+
+      setDiffusion(amount) {
+        this.diffusion = Math.max(0, Math.min(1, amount));
+        const minQ = 0.3;
+        const maxQ = 2.0;
+        const q = minQ + (maxQ - minQ) * this.diffusion;
+        this.diffusers.forEach(ap => ap.Q.value = q);
+      }
+    }
+
+    function makeSaturationCurve(amount) {
+      const n = 2048;
+      const curve = new Float32Array(n);
+      const k = amount * 20;
+      for (let i = 0; i < n; i++) {
+        const x = (i * 2) / n - 1;
+        if (k === 0) {
+          curve[i] = x;
+        } else {
+          curve[i] = ((1 + k) * x) / (1 + k * Math.abs(x));
+        }
+      }
+      return curve;
+    }
+
+    function initAudio() {
+      if (!audioCtx) {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+        masterBus = audioCtx.createGain();
+        masterBus.gain.value = globalVolume;
+
+        // Tube-like saturation (WaveShaper) before reverb/dry split
+        saturator = audioCtx.createWaveShaper();
+        saturator.curve = makeSaturationCurve(saturationAmount);
+        saturator.oversample = '4x';
+
+        dryGain = audioCtx.createGain();
+        wetGain = audioCtx.createGain();
+        dryGain.gain.value = 1.0;
+        wetGain.gain.value = reverbWetValue;
+
+        plateReverb = new SimplePlateReverb(audioCtx);
+
+        // High-pass filter on reverb return
+        reverbHP = audioCtx.createBiquadFilter();
+        reverbHP.type = 'highpass';
+        reverbHP.frequency.value = 420;
+        reverbHP.Q.value = 0.707;
+
+        // 🔹 SOFT LIMITER (master output)
+        limiter = audioCtx.createDynamicsCompressor();
+        limiter.threshold.value = -1.0;
+        limiter.knee.value      = 12.0;
+        limiter.ratio.value     = 3.0;
+        limiter.attack.value    = 0.003;
+        limiter.release.value   = 0.15;
+
+        // Routing: tracks -> masterBus -> saturator -> dry + reverb -> limiter -> destination
+        masterBus.connect(saturator);
+        saturator.connect(dryGain);
+        saturator.connect(plateReverb.input);
+        plateReverb.output.connect(reverbHP);
+        reverbHP.connect(wetGain);
+
+        dryGain.connect(limiter);
+        wetGain.connect(limiter);
+        limiter.connect(audioCtx.destination);
+
+        // Apply fixed reverb params
+        plateReverb.setSize(reverbSize);
+        plateReverb.setDecay(reverbDecay);
+        plateReverb.setDiffusion(reverbDiffAmount);
+      }
+    }
+
+    // ==== Step / Track classes ====
+    class Step {
+      constructor() {
+        this.active = false;
+        this.velocity = 0.8;
+        this.tune = 0;
+        this.probSeed = Math.random();
+      }
+    }
+
+    class TrackParams {
+      constructor(index) {
+        this.index = index;
+        this.length = STEPS;
+
+        // Hardcoded pan per track
+        if (index === 0) this.pan = 0.0;
+        else if (index === 1) this.pan = -0.5;
+        else if (index === 2) this.pan = 0.5;
+        else if (index === 3) this.pan = -1.0;
+        else if (index === 4) this.pan = 1.0;
+        else this.pan = 0.0;
+
+        this.steps = [];
+        for (let i = 0; i < STEPS; i++) this.steps.push(new Step());
+      }
+    }
+
+    const tracks = [];
+    const voices = [];
+
+    class VoiceEngine {
+      constructor(trackParams) {
+        this.p = trackParams;
+        this.ctx = audioCtx;
+
+        this.panner = this.ctx.createStereoPanner();
+        this.trackGain = this.ctx.createGain();
+        this.panner.connect(this.trackGain);
+        this.trackGain.connect(masterBus);
+      }
+
+      updateStaticParams() {
+        const p = this.p;
+        this.panner.pan.value = p.pan;
+        this.trackGain.gain.value = 0.25;
+      }
+
+      triggerStep(step, time, baseMidi = 60) {
+        const ctx = this.ctx;
+        const p = this.p;
+
+        const attack = envAttack;
+        const decay  = envDecay;
+        const sustain = envSustain;
+        const release = envRelease;
+        const octave = globalOctave;
+
+        let semiOffset = octave * 12 + step.tune;
+        let note = baseMidi + semiOffset;
+        const freq = 440 * Math.pow(2, (note - 69) / 12);
+
+        const osc1 = ctx.createOscillator();
+        osc1.type = 'sine';
+        const osc1Gain = ctx.createGain();
+        osc1Gain.gain.value = 1.0;
+        osc1.frequency.setValueAtTime(freq, time);
+
+        const noiseBuffer = ctx.createBuffer(1, 2 * ctx.sampleRate, ctx.sampleRate);
+        const data = noiseBuffer.getChannelData(0);
+        for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+
+        const noise = ctx.createBufferSource();
+        noise.buffer = noiseBuffer;
+        const noiseGain = ctx.createGain();
+        noiseGain.gain.value = globalNoiseLevel;
+
+        const mix = ctx.createGain();
+        osc1.connect(osc1Gain);
+        noise.connect(noiseGain);
+        osc1Gain.connect(mix);
+        noiseGain.connect(mix);
+
+        const noteGain = ctx.createGain();
+        noteGain.gain.setValueAtTime(0, time);
+        mix.connect(noteGain);
+        noteGain.connect(this.panner);
+        this.panner.pan.setValueAtTime(p.pan, time);
+
+        const g = noteGain.gain;
+        const atkTime = Math.max(0.002, attack);
+        const peak = Math.max(0.0001, step.velocity);
+        const sustainLevel = peak * sustain;
+
+        g.cancelScheduledValues(time);
+        g.setValueAtTime(0, time);
+        g.linearRampToValueAtTime(peak, time + atkTime);
+        g.linearRampToValueAtTime(sustainLevel, time + atkTime + decay);
+        g.linearRampToValueAtTime(0, time + atkTime + decay + release);
+
+        const dur = atkTime + decay + release + 0.01;
+
+        osc1.start(time);
+        noise.start(time);
+        osc1.stop(time + dur);
+        noise.stop(time + dur);
+
+        osc1.onended = () => {
+          mix.disconnect();
+          noteGain.disconnect();
+        };
+      }
+    }
+
+    function scheduleNotes() {
+      const baseMidis = [48, 55, 62, 69, 76];
+      while (nextNoteTime < audioCtx.currentTime + scheduleAheadTime) {
+        for (let t = 0; t < NUM_TRACKS; t++) {
+          const track = tracks[t];
+          const voice = voices[t];
+          const len = Math.max(1, Math.min(STEPS, Math.round(track.length)));
+          const stepIndex = currentStep % len;
+          const step = track.steps[stepIndex];
+          if (step.active) {
+            voice.triggerStep(step, nextNoteTime, baseMidis[t]);
+          }
+        }
+        nextNoteTime += secondsPerStep();
+        currentStep = (currentStep + 1) % STEPS;
+      }
+    }
+
+    function scheduler() {
+      if (!isPlaying) return;
+      scheduleNotes();
+      timerID = setTimeout(scheduler, lookahead * 1000);
+    }
+
+    function actuallyStart() {
+  // only called when AudioContext is already running
+  if (!isPlaying) {
+    isPlaying = true;
+    currentStep = 0;
+    nextNoteTime = audioCtx.currentTime + 0.1;
+    playStartTime = audioCtx.currentTime;
+    scheduler();
+  }
+}
+
+function start() {
+  initAudio();
+
+  if (!audioCtx) return;
+
+  if (audioCtx.state === 'suspended') {
+    // On mobile this is usually the first tap
+    audioCtx.resume().then(() => {
+      actuallyStart();
+    }).catch(err => {
+      console.warn('AudioContext resume failed:', err);
+    });
+  } else {
+    // Desktop / already running case
+    actuallyStart();
+  }
+}
+
+    function stop() {
+      isPlaying = false;
+      if (timerID) clearTimeout(timerID);
+    }
+
+    // ==== Density & randomization (audio side only) ====
+    function applyDensityToTrack(track) {
+      const len = Math.max(1, Math.min(STEPS, Math.round(track.length)));
+      for (let i = 0; i < STEPS; i++) {
+        const st = track.steps[i];
+        if (!st) continue;
+        if (st.probSeed === undefined) {
+          st.probSeed = Math.random();
+        }
+        if (i < len) {
+          st.active = (st.probSeed < density);
+        } else {
+          st.active = false;
+        }
+      }
+    }
+
+    function applyDensityToAllTracks() {
+      for (let i = 0; i < NUM_TRACKS; i++) {
+        applyDensityToTrack(tracks[i]);
+      }
+    }
+
+    function randomizeTrackSteps(track) {
+      const len = Math.max(1, Math.min(STEPS, Math.round(track.length)));
+      for (let i = 0; i < STEPS; i++) {
+        const st = track.steps[i];
+        st.probSeed = Math.random();
+        if (i < len) {
+          st.active = (st.probSeed < density);
+          st.velocity = 0.4 + Math.random() * 0.6;
+          const raw = -12 + Math.floor(Math.random() * 25);
+          st.tune = quantizeSemitone(raw);
+        } else {
+          st.active = false;
+          st.velocity = 0.7;
+          st.tune = quantizeSemitone(0);
+        }
+      }
+    }
+
+    for (let i = 0; i < NUM_TRACKS; i++) {
+      const t = new TrackParams(i);
+      tracks.push(t);
+    }
+
+    function randomizeAllSequences(resetTiming) {
+      const pool = [...FIB_LENGTHS];
+      for (let i = pool.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [pool[i], pool[j]] = [pool[j], pool[i]];
+      }
+      for (let i = 0; i < NUM_TRACKS; i++) {
+        tracks[i].length = pool[i % pool.length];
+        randomizeTrackSteps(tracks[i]);
+      }
+      currentStep = 0;
+      if (resetTiming && audioCtx) {
+        nextNoteTime = audioCtx.currentTime + 0.1;
+        playStartTime = audioCtx.currentTime;
+      }
+    }
+
+    // Initial randomization when sketch loads
+    randomizeAllSequences(false);
+
+    function ensureVoices() {
+      if (!audioCtx || voices.length) return;
+      for (let i = 0; i < NUM_TRACKS; i++) {
+        voices.push(new VoiceEngine(tracks[i]));
+      }
+    }
+
+    // ---------- Tempo → envelope dependencies (no DOM) ----------
+    function updateReleaseForTempo() {
+      let newRel;
+      if (bpm >= 60) {
+        newRel = 0.2;
+      } else if (bpm <= 30) {
+        newRel = 0.3;
+      } else {
+        const x = (60 - bpm) / 30;
+        newRel = 0.2 + 0.1 * x;
+      }
+      envRelease = newRel;
+    }
+
+    function updateSustainForTempo() {
+      let newSus;
+      if (bpm >= 60) {
+        newSus = 0.2;
+      } else if (bpm <= 30) {
+        newSus = 0.3;
+      } else {
+        const x = (60 - bpm) / 30;
+        newSus = 0.2 + 0.1 * x;
+      }
+      envSustain = newSus;
+    }
+
+    // visual slider states (0..1)
+    let tempoSliderVal  = bpmToSliderVal(bpm);
+
+    // keep voices updated (pan etc.)
+    setInterval(() => {
+      if (!audioCtx || !voices.length) return;
+      for (const v of voices) v.updateStaticParams();
+    }, 100);
+
+    // ---------- Visualization ----------
+    const canvas = document.getElementById('viz');
+    const ctx2d = canvas.getContext('2d');
+
+    let vizWidth = window.innerWidth;
+    let vizHeight = window.innerHeight;
+    let radii = [];
+
+    // --- UI scaling based on min dimension ---
+    let uiScale = 1;
+    const BASE_REF_SIZE = 600;
+    const BASE_BTN_R = 24;
+    const BASE_MARGIN = 48;
+    const BASE_TOP_Y = 50;
+    const BASE_SIDE_MARGIN = 40;
+    const BASE_BOTTOM_OFFSET = 40;
+    const BASE_VSLIDER_H = 280;
+    const BASE_VSLIDER_TRACK_HALF_WIDTH = 14;
+    const BASE_VSLIDER_HANDLE_R = 16;
+    const BASE_HSLIDER_W = 250;
+    const BASE_HSLIDER_TRACK_HALF_HEIGHT = 8;
+    const BASE_HSLIDER_HANDLE_R = 14;
+
+    let BTN_R = BASE_BTN_R;
+    let RND_R = BASE_BTN_R;
+    let VSLIDER_H = BASE_VSLIDER_H;
+    let VSLIDER_TRACK_HALF_WIDTH = BASE_VSLIDER_TRACK_HALF_WIDTH;
+    let VSLIDER_HANDLE_R = BASE_VSLIDER_HANDLE_R;
+    let HSLIDER_W = BASE_HSLIDER_W;
+    let HSLIDER_TRACK_HALF_HEIGHT = BASE_HSLIDER_TRACK_HALF_HEIGHT;
+    let HSLIDER_HANDLE_R = BASE_HSLIDER_HANDLE_R;
+
+    function updateRadii() {
+      const minDim = Math.min(vizWidth, vizHeight);
+      const phi = (1 + Math.sqrt(5)) / 2;
+      const maxOuter = minDim * 0.38;
+      radii = [];
+      for (let i = 0; i < NUM_TRACKS; i++) {
+        const k = NUM_TRACKS - 1 - i;
+        radii[i] = maxOuter / Math.pow(phi, k);
+      }
+    }
+
+    // ======= PARTICLE BACKGROUND (WHITE RAYS) =======
+    const MAX_PARTICLES = 400;
+    const particles = [];
+
+    function resetParticle(p, minDim, randomRadius) {
+      p.angle = Math.random() * Math.PI * 2;
+      p.radius = randomRadius ? Math.random() * minDim * 1.2 : 0;
+      p.speed = 0.18 + Math.random() * 0.45; // base radial speed factor
+      p.size = (0.8 + Math.random() * 1.4);  // base radius in px, scaled by uiScale later
+      p.alphaBase = 0.25 + Math.random() * 0.55;
+    }
+
+    function initParticles() {
+      const minDim = Math.min(vizWidth, vizHeight);
+      particles.length = 0;
+      for (let i = 0; i < MAX_PARTICLES; i++) {
+        const p = {};
+        resetParticle(p, minDim, true);
+        particles.push(p);
+      }
+    }
+
+    function drawParticleLayer(t, cx, cy, minDim) {
+      if (densitySliderVal <= 0.01) return;
+
+      const { speedFactor } = getTempoFactors();
+
+      // Number of active particles depends on density
+      const minCount = 20;
+      const maxCount = MAX_PARTICLES;
+      const activeCount = Math.floor(minCount + densitySliderVal * (maxCount - minCount));
+
+      const maxR = minDim * 1.2;
+
+      ctx2d.save();
+      ctx2d.fillStyle = 'white';
+
+      for (let i = 0; i < activeCount; i++) {
+        const p = particles[i];
+
+        // Radial speed scales with tempo & density
+        const radialStep = (minDim * 0.0006) +
+                           p.speed * minDim * 0.0015 *
+                           (0.4 + 1.6 * densitySliderVal) *
+                           (0.5 + 0.5 * speedFactor);
+
+        p.radius += radialStep;
+
+        if (p.radius > maxR) {
+          resetParticle(p, minDim, false);
+        }
+
+        const x = cx + p.radius * Math.cos(p.angle);
+        const y = cy + p.radius * Math.sin(p.angle);
+
+        const alpha = p.alphaBase * (0.25 + 0.75 * densitySliderVal);
+        ctx2d.globalAlpha = alpha;
+
+        const r = p.size * uiScale;
+        ctx2d.beginPath();
+        ctx2d.arc(x, y, r, 0, Math.PI * 2);
+        ctx2d.fill();
+      }
+
+      ctx2d.restore();
+    }
+    // =============================================
+
+   function resizeViz() {
+  // Logical size in CSS pixels
+  vizWidth  = window.innerWidth;
+  vizHeight = window.innerHeight;
+
+  // Make the canvas box match the viewport (CSS)
+  canvas.style.width  = vizWidth + 'px';
+  canvas.style.height = vizHeight + 'px';
+
+  // HiDPI backing store
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width  = Math.round(vizWidth * dpr);
+  canvas.height = Math.round(vizHeight * dpr);
+
+  // 1 unit in code = 1 CSS pixel (no extra scaling surprises)
+  ctx2d.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  // UI scaling in *logical* pixels (as before)
+  const minDim = Math.min(vizWidth, vizHeight);
+  uiScale = minDim / BASE_REF_SIZE;
+
+  // Same size relationships as before
+  BTN_R = BASE_BTN_R * uiScale;
+  RND_R = BASE_BTN_R * uiScale;
+  VSLIDER_H = BASE_VSLIDER_H * uiScale;
+  VSLIDER_TRACK_HALF_WIDTH = BASE_VSLIDER_TRACK_HALF_WIDTH * uiScale;
+  VSLIDER_HANDLE_R = BASE_VSLIDER_HANDLE_R * uiScale;
+
+  // ⬇️ Horizontal sliders: keep old behavior, but CLAMP width
+  // so left & right sliders can *never* overlap, even on tiny screens.
+  const desiredHSliderW = BASE_HSLIDER_W * uiScale;
+  const maxHSliderW = vizWidth * 0.42; // 2 sliders = 84% width total, leaves gap + margins
+  HSLIDER_W = Math.min(desiredHSliderW, maxHSliderW);
+
+  HSLIDER_TRACK_HALF_HEIGHT = BASE_HSLIDER_TRACK_HALF_HEIGHT * uiScale;
+  HSLIDER_HANDLE_R = BASE_HSLIDER_HANDLE_R * uiScale;
+
+      updateRadii();
+
+      initParticles();
+    }
+
+    window.addEventListener('resize', resizeViz);
+    resizeViz();
+
+    const TRACK_COLORS = [
+      { r: 150, g: 210, b: 255 },
+      { r: 255, g: 205, b: 160 },
+      { r: 200, g: 180, b: 255 },
+      { r: 255, g: 180, b: 195 },
+      { r: 185, g: 255, b: 205 }
+    ];
+
+    const PLAY_COLOR   = { r: 255, g: 180, b: 80 };
+    const RANDOM_COLOR = { r: 255, g: 120, b: 140 };
+    const WET_COLOR    = { r: 140, g: 210, b: 255 };
+    const SAT_COLOR    = { r: 145, g: 135, b: 255 };
+    const OCT_COLOR    = { r: 255, g: 235, b: 150 };
+    const TEMPO_COLOR  = { r: 255, g: 255, b: 255 };
+    const DENSITY_COLOR = { r: 180, g: 180, b: 190 };
+
+    // Fixed rgba helper
+    function rgba(c, a) {
+      return `rgba(${c.r},${c.g},${c.b},${a})`;
+    }
+
+    function getTrackPhase(trackIndex) {
+      const track = tracks[trackIndex];
+      const len = Math.max(1, Math.round(track.length));
+      if (!audioCtx || !isPlaying) return 0;
+      const now = audioCtx.currentTime;
+      const elapsed = now - playStartTime;
+      const stepsPerSecond = bpm / 60 * 4;
+      const totalSteps = stepsPerSecond * elapsed;
+      return (totalSteps % len);
+    }
+
+    function drawGear(cx, cy, outerRadius, track, phase, trackIndex) {
+      const len = Math.max(1, Math.round(track.length));
+      const anglePerTooth = (Math.PI * 2) / len;
+
+      const rOuter = outerRadius;
+      const rInner = rOuter * 0.55;
+      const rCore  = rOuter * 0.30;
+
+      const col = TRACK_COLORS[trackIndex % TRACK_COLORS.length];
+
+      // Glow
+      const glowGrad = ctx2d.createRadialGradient(
+        cx, cy, rCore * 0.2,
+        cx, cy, rOuter * 1.2
+      );
+      glowGrad.addColorStop(0.0, 'rgba(0,0,0,0)');
+      glowGrad.addColorStop(0.35, rgba(col, 0.03));
+      glowGrad.addColorStop(0.8, 'rgba(0,0,0,0.85)');
+      glowGrad.addColorStop(1.0, 'rgba(0,0,0,1)');
+      ctx2d.fillStyle = glowGrad;
+      ctx2d.beginPath();
+      ctx2d.arc(cx, cy, rOuter * 1.2, 0, Math.PI * 2);
+      ctx2d.fill();
+
+      // Ring
+      const ringGrad = ctx2d.createRadialGradient(
+        cx, cy, rCore,
+        cx, cy, rOuter
+      );
+      ringGrad.addColorStop(0.0, 'rgba(10,10,12,1)');
+      ringGrad.addColorStop(0.5, rgba(col, 0.08));
+      ringGrad.addColorStop(1.0, 'rgba(0,0,0,1)');
+      ctx2d.fillStyle = ringGrad;
+      ctx2d.beginPath();
+      ctx2d.arc(cx, cy, rOuter, 0, Math.PI * 2);
+      ctx2d.arc(cx, cy, rInner, Math.PI * 2, 0, true);
+      ctx2d.closePath();
+      ctx2d.fill();
+
+      // Core
+      const coreGrad = ctx2d.createRadialGradient(
+        cx, cy, 0,
+        cx, cy, rCore
+      );
+      coreGrad.addColorStop(0.0, rgba(col, 0.35));
+      coreGrad.addColorStop(0.9, 'rgba(10,10,12,1)');
+      ctx2d.fillStyle = coreGrad;
+      ctx2d.beginPath();
+      ctx2d.arc(cx, cy, rCore, 0, Math.PI * 2);
+      ctx2d.fill();
+
+      const currentIndex = Math.floor(phase) % len;
+      const gearRot = -Math.PI / 2;
+
+      for (let i = 0; i < len; i++) {
+        const step = track.steps[i];
+        const active = step.active;
+        const vel = step.velocity;
+        const baseAlpha = active ? (0.10 + vel * 0.35) : 0.03;
+        const isCurrent = (i === currentIndex);
+        const alpha = isCurrent ? baseAlpha * 2.2 : baseAlpha;
+
+        const aMid = gearRot + i * anglePerTooth;
+        const a0 = aMid - anglePerTooth * 0.45;
+        const a1 = aMid + anglePerTooth * 0.45;
+
+        const toothOuter = rOuter + (active ? 3 + vel * 4 : 1);
+
+        ctx2d.beginPath();
+        ctx2d.moveTo(cx + rInner * Math.cos(a0), cy + rInner * Math.sin(a0));
+        ctx2d.lineTo(cx + toothOuter * Math.cos(a0), cy + toothOuter * Math.sin(a0));
+        ctx2d.lineTo(cx + toothOuter * Math.cos(a1), cy + toothOuter * Math.sin(a1));
+        ctx2d.lineTo(cx + rInner * Math.cos(a1), cy + rInner * Math.sin(a1));
+        ctx2d.closePath();
+        ctx2d.fillStyle = rgba(col, alpha);
+        ctx2d.fill();
+      }
+    }
+
+    // Scaled centers for play / random
+    function getPlayCenter() {
+      return {
+        x: BASE_MARGIN * uiScale,
+        y: BASE_TOP_Y * uiScale
+      };
+    }
+
+    function getRndCenter() {
+      return {
+        x: vizWidth - BASE_MARGIN * uiScale,
+        y: BASE_TOP_Y * uiScale
+      };
+    }
+
+    function drawPlayButton() {
+      const col = PLAY_COLOR;
+      const { x: px, y: py } = getPlayCenter();
+
+      const haloGrad = ctx2d.createRadialGradient(
+        px, py, 4 * uiScale,
+        px, py, BTN_R * 2.2
+      );
+      haloGrad.addColorStop(0.0, 'rgba(0,0,0,0)');
+      haloGrad.addColorStop(0.4, rgba(col, 0.2));
+      haloGrad.addColorStop(1.0, 'rgba(0,0,0,1)');
+      ctx2d.fillStyle = haloGrad;
+      ctx2d.beginPath();
+      ctx2d.arc(px, py, BTN_R * 2, 0, Math.PI * 2);
+      ctx2d.fill();
+
+      const orbGrad = ctx2d.createRadialGradient(
+        px, py, 2 * uiScale,
+        px, py, BTN_R
+      );
+      const baseAlpha = isPlaying ? 0.95 : 0.7;
+      orbGrad.addColorStop(0.0, rgba(col, baseAlpha));
+      orbGrad.addColorStop(0.5, rgba(col, 0.4));
+      orbGrad.addColorStop(1.0, 'rgba(5,8,12,1)');
+      ctx2d.fillStyle = orbGrad;
+      ctx2d.beginPath();
+      ctx2d.arc(px, py, BTN_R, 0, Math.PI * 2);
+      ctx2d.fill();
+
+      ctx2d.strokeStyle = rgba(col, 0.9);
+      ctx2d.lineWidth = 1.5 * uiScale;
+      ctx2d.beginPath();
+      ctx2d.arc(px, py, BTN_R - 1 * uiScale, 0, Math.PI * 2);
+      ctx2d.stroke();
+
+      ctx2d.fillStyle = 'rgba(5,5,8,0.95)';
+      ctx2d.save();
+      ctx2d.translate(px, py);
+      ctx2d.scale(uiScale, uiScale);
+      if (!isPlaying) {
+        ctx2d.beginPath();
+        ctx2d.moveTo(-6, -8);
+        ctx2d.lineTo(8, 0);
+        ctx2d.lineTo(-6, 8);
+        ctx2d.closePath();
+        ctx2d.fill();
+      } else {
+        ctx2d.beginPath();
+        ctx2d.roundRect(-8, -8, 16, 16, 3);
+        ctx2d.fill();
+      }
+      ctx2d.restore();
+    }
+
+    function drawRandomButton() {
+      const { x, y } = getRndCenter();
+      const col = RANDOM_COLOR;
+
+      const haloGrad = ctx2d.createRadialGradient(
+        x, y, 4 * uiScale,
+        x, y, RND_R * 2.2
+      );
+      haloGrad.addColorStop(0.0, 'rgba(0,0,0,0)');
+      haloGrad.addColorStop(0.4, rgba(col, 0.22));
+      haloGrad.addColorStop(1.0, 'rgba(0,0,0,1)');
+      ctx2d.fillStyle = haloGrad;
+      ctx2d.beginPath();
+      ctx2d.arc(x, y, RND_R * 2, 0, Math.PI * 2);
+      ctx2d.fill();
+
+      const orbGrad = ctx2d.createRadialGradient(
+        x, y, 2 * uiScale,
+        x, y, RND_R
+      );
+      orbGrad.addColorStop(0.0, rgba(col, 0.95));
+      orbGrad.addColorStop(0.5, rgba(col, 0.45));
+      orbGrad.addColorStop(1.0, 'rgba(10,5,8,1)');
+      ctx2d.fillStyle = orbGrad;
+      ctx2d.beginPath();
+      ctx2d.arc(x, y, RND_R, 0, Math.PI * 2);
+      ctx2d.fill();
+
+      ctx2d.strokeStyle = rgba(col, 0.9);
+      ctx2d.lineWidth = 1.5 * uiScale;
+      ctx2d.beginPath();
+      ctx2d.arc(x, y, RND_R - 1 * uiScale, 0, Math.PI * 2);
+      ctx2d.stroke();
+
+      ctx2d.fillStyle = 'rgba(5,5,8,0.95)';
+      ctx2d.save();
+      ctx2d.translate(x, y);
+      ctx2d.scale(uiScale, uiScale);
+      ctx2d.beginPath();
+      ctx2d.roundRect(-8, -8, 16, 16, 3);
+      ctx2d.fill();
+
+      ctx2d.fillStyle = 'rgba(255,255,255,0.9)';
+      const dot = (dx, dy) => {
+        ctx2d.beginPath();
+        ctx2d.arc(dx, dy, 1.5, 0, Math.PI * 2);
+        ctx2d.fill();
+      };
+      dot(-4, -4);
+      dot(0, 0);
+      dot(4, 4);
+      ctx2d.restore();
+    }
+
+    // --- Vertical sliders (left/right, centered vertically) ---
+    let wetSliderVal = reverbWetValue / 0.25;
+    let satSliderVal = 0.1;
+    // NEW: Density slider state (0..1)
+    let densitySliderVal = density;
+
+    let draggingWet = false;
+    let draggingSat = false;
+    let draggingTempo = false;
+    let draggingOct = false;
+    let draggingDensity = false;
+
+    function getWetSliderGeom() {
+      const x = BASE_SIDE_MARGIN * uiScale;
+      const cy = vizHeight / 2;
+      const top = cy - VSLIDER_H / 2;
+      const bottom = cy + VSLIDER_H / 2;
+      return { x, top, bottom };
+    }
+
+    function getSatSliderGeom() {
+      const x = vizWidth - BASE_SIDE_MARGIN * uiScale;
+      const cy = vizHeight / 2;
+      const top = cy - VSLIDER_H / 2;
+      const bottom = cy + VSLIDER_H / 2;
+      return { x, top, bottom };
+    }
+
+    function getOctaveSliderGeom() {
+      const cx = vizWidth / 2;
+      const width = HSLIDER_W;
+      const left = cx - width / 2;
+      const right = cx + width / 2;
+      const y = BASE_TOP_Y * uiScale;
+      return { left, right, y };
+    }
+
+    function drawVerticalSlider(color, x, top, bottom, value, label) {
+      const mid = (top + bottom) / 2;
+
+      const haloGrad = ctx2d.createRadialGradient(
+        x, mid, 4 * uiScale,
+        x, mid, VSLIDER_H * 0.8
+      );
+      haloGrad.addColorStop(0.0, 'rgba(0,0,0,0)');
+      haloGrad.addColorStop(0.4, rgba(color, 0.18));
+      haloGrad.addColorStop(1.0, 'rgba(0,0,0,1)');
+      ctx2d.fillStyle = haloGrad;
+      ctx2d.beginPath();
+      ctx2d.roundRect(
+        x - VSLIDER_TRACK_HALF_WIDTH * 2,
+        top - 18 * uiScale,
+        VSLIDER_TRACK_HALF_WIDTH * 4,
+        VSLIDER_H + 36 * uiScale,
+        18 * uiScale
+      );
+      ctx2d.fill();
+
+      const trackGrad = ctx2d.createLinearGradient(x, top, x, bottom);
+      trackGrad.addColorStop(0.0, 'rgba(15,20,30,1)');
+      trackGrad.addColorStop(0.5, rgba(color, 0.12));
+      trackGrad.addColorStop(1.0, 'rgba(5,8,12,1)');
+      ctx2d.fillStyle = trackGrad;
+      ctx2d.beginPath();
+      ctx2d.roundRect(
+        x - VSLIDER_TRACK_HALF_WIDTH,
+        top,
+        VSLIDER_TRACK_HALF_WIDTH * 2,
+        VSLIDER_H,
+        8 * uiScale
+      );
+      ctx2d.fill();
+
+      const handleY = bottom - value * VSLIDER_H;
+      const orbGrad = ctx2d.createRadialGradient(
+        x - 5 * uiScale, handleY - 5 * uiScale, 2 * uiScale,
+        x, handleY, VSLIDER_HANDLE_R
+      );
+      orbGrad.addColorStop(0.0, rgba(color, 0.95));
+      orbGrad.addColorStop(0.5, rgba(color, 0.45));
+      orbGrad.addColorStop(1.0, 'rgba(5,8,12,1)');
+      ctx2d.fillStyle = orbGrad;
+      ctx2d.beginPath();
+      ctx2d.arc(x, handleY, VSLIDER_HANDLE_R, 0, Math.PI * 2);
+      ctx2d.fill();
+
+      ctx2d.strokeStyle = rgba(color, 0.9);
+      ctx2d.lineWidth = 1.4 * uiScale;
+      ctx2d.beginPath();
+      ctx2d.arc(x, handleY, VSLIDER_HANDLE_R - 1 * uiScale, 0, Math.PI * 2);
+      ctx2d.stroke();
+
+      ctx2d.fillStyle = 'rgba(220,230,255,0.75)';
+      ctx2d.font = `${10 * uiScale}px sans-serif`;
+      ctx2d.textAlign = 'center';
+      ctx2d.fillText(label, x, bottom + 28 * uiScale);
+    }
+
+    function drawHorizontalSlider(color, left, right, y, value, label) {
+      const cx = (left + right) / 2;
+
+      const haloGrad = ctx2d.createRadialGradient(
+        cx, y, 4 * uiScale,
+        cx, y, HSLIDER_W * 0.6
+      );
+      haloGrad.addColorStop(0.0, 'rgba(0,0,0,0)');
+      haloGrad.addColorStop(0.4, rgba(color, 0.18));
+      haloGrad.addColorStop(1.0, 'rgba(0,0,0,1)');
+      ctx2d.fillStyle = haloGrad;
+      ctx2d.beginPath();
+      ctx2d.roundRect(
+        left - 24 * uiScale,
+        y - HSLIDER_TRACK_HALF_HEIGHT * 3,
+        (right - left) + 48 * uiScale,
+        HSLIDER_TRACK_HALF_HEIGHT * 6,
+        18 * uiScale
+      );
+      ctx2d.fill();
+
+      const trackGrad = ctx2d.createLinearGradient(left, y, right, y);
+      trackGrad.addColorStop(0.0, 'rgba(15,20,30,1)');
+      trackGrad.addColorStop(0.5, rgba(color, 0.18));
+      trackGrad.addColorStop(1.0, 'rgba(5,8,12,1)');
+      ctx2d.fillStyle = trackGrad;
+      ctx2d.beginPath();
+      ctx2d.roundRect(
+        left,
+        y - HSLIDER_TRACK_HALF_HEIGHT,
+        right - left,
+        HSLIDER_TRACK_HALF_HEIGHT * 2,
+        8 * uiScale
+      );
+      ctx2d.fill();
+
+      const handleX = left + value * (right - left);
+      const orbGrad = ctx2d.createRadialGradient(
+        handleX - 5 * uiScale, y - 5 * uiScale, 2 * uiScale,
+        handleX, y, HSLIDER_HANDLE_R
+      );
+      orbGrad.addColorStop(0.0, rgba(color, 0.95));
+      orbGrad.addColorStop(0.5, rgba(color, 0.45));
+      orbGrad.addColorStop(1.0, 'rgba(5,8,12,1)');
+      ctx2d.fillStyle = orbGrad;
+      ctx2d.beginPath();
+      ctx2d.arc(handleX, y, HSLIDER_HANDLE_R, 0, Math.PI * 2);
+      ctx2d.fill();
+
+      ctx2d.strokeStyle = rgba(color, 0.9);
+      ctx2d.lineWidth = 1.4 * uiScale;
+      ctx2d.beginPath();
+      ctx2d.arc(handleX, y, HSLIDER_HANDLE_R - 1 * uiScale, 0, Math.PI * 2);
+      ctx2d.stroke();
+
+      ctx2d.fillStyle = 'rgba(230,235,255,0.8)';
+      ctx2d.font = `${10 * uiScale}px sans-serif`;
+      ctx2d.textAlign = 'center';
+      ctx2d.fillText(label, cx, y + 22 * uiScale);
+    }
+
+    function getTempoSliderGeom() {
+      const width = HSLIDER_W;
+      const cx = vizWidth * (3 / 4);
+      const left = cx - width / 2;
+      const right = cx + width / 2;
+      const y = vizHeight - BASE_BOTTOM_OFFSET * uiScale;
+      return { left, right, y };
+    }
+
+    function getDensitySliderGeom() {
+      const width = HSLIDER_W;
+      const cx = vizWidth * (1 / 4);
+      const left = cx - width / 2;
+      const right = cx + width / 2;
+      const y = vizHeight - BASE_BOTTOM_OFFSET * uiScale;
+      return { left, right, y };
+    }
+
+    // ---------- SACRED GEOMETRY TEMPLE LAYERS ----------
+
+    function getTempoFactors() {
+      const tempoNorm = (bpm - TEMPO_MIN) / (TEMPO_MAX - TEMPO_MIN);
+      const tn = Math.max(0, Math.min(1, tempoNorm));
+      const speedFactor = 0.3 + 1.7 * tn; // 0.3..2.0
+      return { tempoNorm: tn, speedFactor };
+    }
+
+    function drawReverbLayer(t, cx, cy, minDim) {
+      const wet  = wetSliderVal;       // 0..1
+      const dVal = densitySliderVal;   // 0..1
+      if (wet < 0.02 && dVal < 0.05) return;
+
+      const { speedFactor } = getTempoFactors();
+
+      const baseRings  = 18;
+      const extraRings = Math.floor(60 * wet * (0.3 + 0.7 * dVal));
+      const ringCount  = baseRings + extraRings;
+
+      const minR = minDim * 0.03;
+      const maxR = minDim * 1.2;
+
+      ctx2d.save();
+      ctx2d.lineWidth = 0.7 * uiScale;
+
+      for (let i = 0; i < ringCount; i++) {
+        const f = i / (ringCount - 1); // 0..1
+        let r = minR + (maxR - minR) * f;
+
+        const wobble = Math.sin(t * 0.25 * speedFactor + i * 0.7) * (minDim * 0.01);
+        r += wobble;
+
+        ctx2d.beginPath();
+        ctx2d.arc(cx, cy, r, 0, Math.PI * 2);
+
+        const edgeFalloff = 0.4 + 0.6 * (1 - Math.abs(f - 0.5) * 1.4);
+        const alpha = (0.04 + 0.32 * wet * (0.2 + 0.8 * dVal)) * edgeFalloff;
+
+        ctx2d.strokeStyle = rgba(WET_COLOR, alpha);
+        ctx2d.stroke();
+      }
+
+      ctx2d.restore();
+    }
+
+    function drawDriveLayer(t, cx, cy, minDim) {
+      const sat  = satSliderVal;
+      const dVal = densitySliderVal;
+      if (sat < 0.02 && dVal < 0.1) return;
+
+      const { speedFactor } = getTempoFactors();
+      const densityFactor = 0.4 + 1.6 * dVal;
+
+      const TAU = Math.PI * 2;
+
+      // === TRIANGLE COUNT: 3 → 12 (linear) ===
+      const MIN_TRIS = 3;
+      const MAX_TRIS = 12;
+      const triCount = Math.floor(MIN_TRIS + sat * (MAX_TRIS - MIN_TRIS));
+      const angleStep = TAU / triCount;
+
+      // === TRIANGLE SIZE: smoothly scales 0.6 → 1.3 with Drive ===
+      const sizeFactor = 0.6 + 0.7 * sat;
+
+      const baseOuter = minDim * 0.60;
+      const baseInner = baseOuter * 0.49;
+
+      const rOuter = baseOuter * sizeFactor;
+      const rInner = baseInner * sizeFactor;
+
+      const rotOuter = t * 0.25 * speedFactor * (0.3 + 0.7 * sat);
+      const rotInner = -t * 0.18 * speedFactor * (0.3 + 0.7 * sat);
+
+      const baseAlpha = 0.12 + 0.33 * sat * (0.2 + 0.8 * dVal);
+
+      ctx2d.save();
+      ctx2d.lineWidth = (1.1 + 1.0 * sat) * uiScale;
+      ctx2d.strokeStyle = rgba(SAT_COLOR, baseAlpha);
+
+      function drawTriRing(radius, baseRot) {
+        for (let i = 0; i < triCount; i++) {
+          const triAngle = baseRot + i * angleStep;
+
+          ctx2d.beginPath();
+          for (let k = 0; k < 3; k++) {
+            const a = triAngle + k * (2 * Math.PI / 3);
+            const x = cx + radius * Math.cos(a);
+            const y = cy + radius * Math.sin(a);
+            if (k === 0) ctx2d.moveTo(x, y);
+            else ctx2d.lineTo(x, y);
+          }
+          ctx2d.closePath();
+          ctx2d.stroke();
+        }
+      }
+
+      // Triangle rings
+      drawTriRing(rOuter, rotOuter);
+      drawTriRing(rInner, rotInner);
+
+      // Rays
+      const baseRays  = 8;
+      const extraRays = Math.floor(24 * sat * densityFactor);
+      const rayCount  = baseRays + extraRays;
+
+      ctx2d.lineWidth = (1.0 + 0.8 * sat) * uiScale;
+
+      for (let i = 0; i < rayCount; i++) {
+        const frac   = i / rayCount;
+        const jitter = (i % 2 === 0 ? 1 : -1) * 0.25 * sat;
+        const a      = rotOuter * 1.8 + frac * Math.PI * 2 + jitter;
+
+        const sizeFactorRays = 0.6 + 0.7 * sat;
+
+        const innerBand = minDim * 0.25;
+        const outerBand = minDim * 0.85;
+
+        const r0 = innerBand * (0.7 + 0.3 * sat) * sizeFactorRays;
+        const r1 = outerBand * (0.8 + 0.2 * sat) * sizeFactorRays;
+
+        const x0 = cx + r0 * Math.cos(a);
+        const y0 = cy + r0 * Math.sin(a);
+        const x1 = cx + r1 * Math.cos(a);
+        const y1 = cy + r1 * Math.sin(a);
+
+        ctx2d.beginPath();
+        ctx2d.moveTo(x0, y0);
+        ctx2d.lineTo(x1, y1);
+
+        const alpha = baseAlpha;
+
+        const baseHue = 270 + 40 * sat;
+        const hueJitter = (Math.random() - 0.5) * 16;
+        let hue = baseHue + hueJitter;
+        if (hue < 0) hue += 360;
+        if (hue >= 360) hue -= 360;
+
+        const satPct = 80 + Math.random() * 10;
+        const lightPct = 55 + Math.random() * 10;
+
+        ctx2d.strokeStyle = `hsla(${hue}, ${satPct}%, ${lightPct}%, ${alpha})`;
+        ctx2d.stroke();
+      }
+
+      ctx2d.restore();
+    }
+
+    function drawOctaveLayer(t, cx, cy, minDim) {
+      const dVal = densitySliderVal;   // 0..1
+      const oct  = globalOctave;       // -2..2
+
+      const octPos = Math.max(0, Math.min(1, (oct + 2) / 4));
+      const activity = 0.25 + 0.75 * octPos;
+
+      if (activity < 0.28 && dVal < 0.05) return;
+
+      const { speedFactor } = getTempoFactors();
+
+      const baseTurns = 1;
+      const maxExtra  = 3;
+      const turns     = baseTurns + maxExtra * octPos;
+      const thetaMax  = turns * Math.PI * 2;
+
+      const baseArms  = 1;
+      const extraArms = Math.floor(3 * dVal);
+      const arms      = baseArms + extraArms;
+
+      const rStart = minDim * 0.04;
+      const rEnd   = minDim * 1.1;
+
+      ctx2d.save();
+      ctx2d.lineWidth = 2 * uiScale;
+
+      for (let arm = 0; arm < arms; arm++) {
+        const armPhase = (arm / arms) * Math.PI * 2;
+
+        ctx2d.beginPath();
+
+        const steps = 900;
+        for (let i = 0; i <= steps; i++) {
+          const u = i / steps;
+          const theta = thetaMax * u;
+
+          const r = rStart + (rEnd - rStart) * u;
+
+          const globalRot = t * 0.15 * speedFactor * (0.4 + 0.6 * activity);
+
+          const a = theta + armPhase + globalRot;
+
+          const x = cx + r * Math.cos(a);
+          const y = cy + r * Math.sin(a);
+
+          if (i === 0) ctx2d.moveTo(x, y);
+          else ctx2d.lineTo(x, y);
+        }
+
+        const baseAlpha = 0.08 + 0.24 * activity * (0.2 + 0.8 * dVal);
+        ctx2d.strokeStyle = rgba(OCT_COLOR, baseAlpha);
+        ctx2d.stroke();
+      }
+
+      ctx2d.restore();
+    }
+
+    function drawTemple(t, cx, cy, minDim) {
+      drawReverbLayer(t, cx, cy, minDim);
+      drawDriveLayer(t, cx, cy, minDim);
+      drawOctaveLayer(t, cx, cy, minDim);
+    }
+
+    // ---------- MAIN DRAW LOOP ----------
+    function drawViz(ts) {
+      const t = ts * 0.001;
+      const minDim = Math.min(vizWidth, vizHeight);
+      const cx = vizWidth / 2;
+      const cy = vizHeight / 2;
+
+      // Trail fade
+      ctx2d.fillStyle = 'rgba(5,8,10,0.30)';
+      ctx2d.fillRect(0, 0, vizWidth, vizHeight);
+
+      // Dark radial gradient background
+      const bgGrad = ctx2d.createRadialGradient(
+        cx, cy, 0,
+        cx, cy, minDim * 0.7
+      );
+      bgGrad.addColorStop(0.0, 'rgba(255,255,255,0.03)');
+      bgGrad.addColorStop(0.3, 'rgba(0,0,0,0.3)');
+      bgGrad.addColorStop(1.0, 'rgba(0,0,0,0.95)');
+      ctx2d.fillStyle = bgGrad;
+      ctx2d.fillRect(0, 0, vizWidth, vizHeight);
+
+      // Sacred geometry temple (background)
+      drawTemple(t, cx, cy, minDim);
+
+      // White particles radiating from center (controlled by density)
+      drawParticleLayer(t, cx, cy, minDim);
+
+      // Gears
+      for (let i = NUM_TRACKS - 1; i >= 0; i--) {
+        const track = tracks[i];
+        const phase = getTrackPhase(i);
+        drawGear(cx, cy, radii[i], track, phase, i);
+      }
+
+      // UI
+      drawPlayButton();
+      drawRandomButton();
+
+      // Left vertical: Reverb
+      const wetGeom = getWetSliderGeom();
+      drawVerticalSlider(WET_COLOR, wetGeom.x, wetGeom.top, wetGeom.bottom, wetSliderVal, 'Reverb');
+
+      // Right vertical: Drive
+      const satGeom = getSatSliderGeom();
+      drawVerticalSlider(SAT_COLOR, satGeom.x, satGeom.top, satGeom.bottom, satSliderVal, 'Drive');
+
+      // Top horizontal: Octave
+      const octGeom = getOctaveSliderGeom();
+      drawHorizontalSlider(OCT_COLOR, octGeom.left, octGeom.right, octGeom.y, octaveSliderVal, 'Octave');
+
+      // Bottom: Tempo
+      const tempoGeom = getTempoSliderGeom();
+      drawHorizontalSlider(TEMPO_COLOR, tempoGeom.left, tempoGeom.right, tempoGeom.y, tempoSliderVal, 'Tempo');
+
+      // Bottom: Density
+      const densityGeom = getDensitySliderGeom();
+      drawHorizontalSlider(DENSITY_COLOR, densityGeom.left, densityGeom.right, densityGeom.y, densitySliderVal, 'Density');
+
+      requestAnimationFrame(drawViz);
+    }
+
+    requestAnimationFrame(drawViz);
+
+    // ---------- Slider → audio glue ----------
+    function applyWetSliderFromValue() {
+      reverbWetValue = wetSliderVal * 0.1875;
+      if (wetGain) {
+        wetGain.gain.value = reverbWetValue;
+      }
+    }
+
+    function applySatSliderFromValue() {
+      saturationAmount = satSliderVal * 0.5;
+      if (saturator) {
+        saturator.curve = makeSaturationCurve(saturationAmount);
+      }
+    }
+
+    function applyOctaveSliderFromValue() {
+      let v = Math.max(0, Math.min(1, octaveSliderVal));
+      const tickIndex = Math.round(v * 4);
+      const snappedVal = tickIndex / 4;
+      octaveSliderVal = snappedVal;
+      const octInt = -2 + tickIndex;
+      globalOctave = octInt;
+    }
+
+    function applyTempoSliderFromValue() {
+      tempoSliderVal = Math.max(0, Math.min(1, tempoSliderVal));
+      const bpmFloat = sliderValToBpm(tempoSliderVal);
+      bpm = Math.round(bpmFloat);
+      updateReleaseForTempo();
+      updateSustainForTempo();
+    }
+
+    function applyDensitySliderFromValue() {
+      densitySliderVal = Math.max(0, Math.min(1, densitySliderVal));
+      density = densitySliderVal;
+      applyDensityToAllTracks();
+    }
+
+    function togglePlay() {
+      initAudio();
+      ensureVoices();
+      for (const v of voices) v.updateStaticParams();
+      if (!isPlaying) {
+        start();
+      } else {
+        stop();
+      }
+    }
+
+  
+
+   function handleCanvasDown(e) {
+  const rect = canvas.getBoundingClientRect();
+  const mx = e.clientX - rect.left;
+  const my = e.clientY - rect.top;
+
+  const wetGeom = getWetSliderGeom();
+  const satGeom = getSatSliderGeom();
+  const tempoGeom = getTempoSliderGeom();
+  const octGeom = getOctaveSliderGeom();
+  const densityGeom = getDensitySliderGeom();
+
+  // 🔹 FIRST: buttons (Play / Random), so sliders can never "steal" the tap
+
+  // Play button hit test
+  {
+    const { x: px, y: py } = getPlayCenter();
+    const dxBtn = mx - px;
+    const dyBtn = my - py;
+    if (dxBtn * dxBtn + dyBtn * dyBtn <= BTN_R * BTN_R) {
+      togglePlay();
+      return;
+    }
+  }
+
+  // Random button hit test
+  {
+    const { x, y } = getRndCenter();
+    const dxR = mx - x;
+    const dyR = my - y;
+    if (dxR * dxR + dyR * dyR <= RND_R * RND_R) {
+      if (randomRestartTimeout) {
+        clearTimeout(randomRestartTimeout);
+        randomRestartTimeout = null;
+      }
+      stop();
+      randomizeAllSequences(false);
+      randomRestartTimeout = setTimeout(() => {
+        initAudio();
+        ensureVoices();
+        for (const v of voices) v.updateStaticParams();
+        start();
+        randomRestartTimeout = null;
+      }, 2000);
+      return;
+    }
+  }
+
+  // 🔹 THEN: sliders
+
+  function hitVSlider(geom) {
+    const { x, top, bottom } = geom;
+    if (
+      mx >= x - VSLIDER_TRACK_HALF_WIDTH * 2 &&
+      mx <= x + VSLIDER_TRACK_HALF_WIDTH * 2 &&
+      my >= top - 20 * uiScale &&
+      my <= bottom + 20 * uiScale
+    ) {
+      return true;
+    }
+    return false;
+  }
+
+  function hitHSlider(geom) {
+    const { left, right, y } = geom;
+    const h = HSLIDER_TRACK_HALF_HEIGHT * 3 + HSLIDER_HANDLE_R * 2;
+    if (
+      mx >= left - 20 * uiScale &&
+      mx <= right + 20 * uiScale &&
+      my >= y - h &&
+      my <= y + h
+    ) {
+      return true;
+    }
+    return false;
+  }
+
+  // Left vertical: Reverb
+  if (hitVSlider(wetGeom)) {
+    const { bottom, top } = wetGeom;
+    const clampedY = Math.max(top, Math.min(bottom, my));
+    wetSliderVal = (bottom - clampedY) / VSLIDER_H;
+    wetSliderVal = Math.max(0, Math.min(1, wetSliderVal));
+    applyWetSliderFromValue();
+    draggingWet = true;
+    return;
+  }
+
+  // Right vertical: Drive
+  if (hitVSlider(satGeom)) {
+    const { bottom, top } = satGeom;
+    const clampedY = Math.max(top, Math.min(bottom, my));
+    satSliderVal = (bottom - clampedY) / VSLIDER_H;
+    satSliderVal = Math.max(0, Math.min(1, satSliderVal));
+    applySatSliderFromValue();
+    draggingSat = true;
+    return;
+  }
+
+  // Top horizontal: Octave
+  if (hitHSlider(octGeom)) {
+    const { left, right } = octGeom;
+    const clampedX = Math.max(left, Math.min(right, mx));
+    octaveSliderVal = (clampedX - left) / (right - left);
+    octaveSliderVal = Math.max(0, Math.min(1, octaveSliderVal));
+    applyOctaveSliderFromValue();
+    draggingOct = true;
+    return;
+  }
+
+  // Bottom horizontal: Density
+  if (hitHSlider(densityGeom)) {
+    const { left, right } = densityGeom;
+    const clampedX = Math.max(left, Math.min(right, mx));
+    densitySliderVal = (clampedX - left) / (right - left);
+    applyDensitySliderFromValue();
+    draggingDensity = true;
+    return;
+  }
+
+  // Bottom horizontal: Tempo
+  if (hitHSlider(tempoGeom)) {
+    const { left, right } = tempoGeom;
+    const clampedX = Math.max(left, Math.min(right, mx));
+    tempoSliderVal = (clampedX - left) / (right - left);
+    applyTempoSliderFromValue();
+    draggingTempo = true;
+    return;
+  }
+}
+
+
+    function handleCanvasMove(e) {
+      if (!draggingWet && !draggingSat && !draggingTempo && !draggingOct && !draggingDensity) return;
+
+      const rect = canvas.getBoundingClientRect();
+      const mx = e.clientX - rect.left;
+      const my = e.clientY - rect.top;
+
+      const wetGeom = getWetSliderGeom();
+      const satGeom = getSatSliderGeom();
+      const tempoGeom = getTempoSliderGeom();
+      const octGeom = getOctaveSliderGeom();
+      const densityGeom = getDensitySliderGeom();
+
+      if (draggingWet) {
+        const { top, bottom } = wetGeom;
+        const clampedY = Math.max(top, Math.min(bottom, my));
+        wetSliderVal = (bottom - clampedY) / VSLIDER_H;
+        wetSliderVal = Math.max(0, Math.min(1, wetSliderVal));
+        applyWetSliderFromValue();
+      }
+
+      if (draggingSat) {
+        const { top, bottom } = satGeom;
+        const clampedY = Math.max(top, Math.min(bottom, my));
+        satSliderVal = (bottom - clampedY) / VSLIDER_H;
+        satSliderVal = Math.max(0, Math.min(1, satSliderVal));
+        applySatSliderFromValue();
+      }
+
+      if (draggingOct) {
+        const { left, right } = octGeom;
+        const clampedX = Math.max(left, Math.min(right, mx));
+        octaveSliderVal = (clampedX - left) / (right - left);
+        octaveSliderVal = Math.max(0, Math.min(1, octaveSliderVal));
+        applyOctaveSliderFromValue();
+      }
+
+      if (draggingDensity) {
+        const { left, right } = densityGeom;
+        const clampedX = Math.max(left, Math.min(right, mx));
+        densitySliderVal = (clampedX - left) / (right - left);
+        applyDensitySliderFromValue();
+      }
+
+      if (draggingTempo) {
+        const { left, right } = tempoGeom;
+        const clampedX = Math.max(left, Math.min(right, mx));
+        tempoSliderVal = (clampedX - left) / (right - left);
+        applyTempoSliderFromValue();
+      }
+    }
+
+    function handleCanvasUp() {
+  draggingWet = false;
+  draggingSat = false;
+  draggingTempo = false;
+  draggingOct = false;
+  draggingDensity = false;
+}
+
+// 🔁 Unified pointer events (mouse + touch + pen)
+canvas.addEventListener('pointerdown', (e) => {
+  e.preventDefault();          // keeps the “true slide” feel, no scroll/zoom
+  handleCanvasDown(e);
+});
+
+canvas.addEventListener('pointermove', (e) => {
+  e.preventDefault();          
+  handleCanvasMove(e);         // handleCanvasMove already ignores if not dragging
+});
+
+canvas.addEventListener('pointerup', () => {
+  handleCanvasUp();
+});
+
+canvas.addEventListener('pointercancel', () => {
+  handleCanvasUp();
+});
+
+// init viz slider sync values
+let octaveSliderVal = (globalOctave + 2) / 4;
+
+// Initial density & envelope adjustments
+applyDensitySliderFromValue();
+updateReleaseForTempo();
+updateSustainForTempo();
+</script>
+</body>
+</html>

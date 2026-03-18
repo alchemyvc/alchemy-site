@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Harpa de Cristal - Experiência Interativa</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            touch-action: none; 
+            cursor: crosshair; 
+        }
+        canvas { 
+            display: block; 
+            touch-action: none; 
+        }
+        /* --- ESTILOS DO TEXTO INICIAL --- */
+        #startText {
+            position: absolute;
+            color: rgba(255, 255, 255, 0.8);
+            font-family: monospace;
+            font-size: 16px;
+            letter-spacing: 4px;
+            text-transform: uppercase;
+            pointer-events: none; 
+            transition: opacity 1s ease; 
+            animation: pulse 2s infinite; 
+            z-index: 10;
+        }
+        @keyframes pulse {
+            0% { opacity: 0.4; }
+            50% { opacity: 1; }
+            100% { opacity: 0.4; }
+        }
+    </style>
+</head>
+<body>
+
+    <div id="startText">tap to start</div>
+    
+    <canvas id="canvas"></canvas>
+
+<script>
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d', { alpha: false });
+    const startText = document.getElementById('startText');
+
+    let width, height, centerX, centerY, limitDistance;
+    let particles = [];
+    const MAX_PARTICLES = 140;
+    let activeParticleCount = MAX_PARTICLES; 
+    
+    let isStarted = false; 
+    
+    let slices = 12; 
+    let angleStep = (Math.PI * 2) / slices;
+    const structureBase = 4; 
+    
+    let speedMultiplier = 1;
+    let rotationOffset = 0;
+
+    const THEMES = [
+        { name: "Gelo Espacial", hue: 200, chord: [261.63, 311.13, 392.00, 466.16, 587.33] },
+        { name: "Neon City", hue: 280, chord: [349.23, 415.30, 523.25, 622.25, 698.46] },
+        { name: "Amanhecer", hue: 40, chord: [311.13, 392.00, 466.16, 587.33, 622.25] },
+        { name: "Marte", hue: 350, chord: [196.00, 261.63, 293.66, 392.00, 587.33] },
+        { name: "Floresta", hue: 150, chord: [207.65, 261.63, 293.66, 311.13, 415.30] }
+    ];
+
+    let currentThemeIndex = 0; 
+
+    let audioCtx;
+    let masterGain;
+    let convolver; 
+    let audioStarted = false;
+
+    function createReverbBuffer(duration) {
+        const sampleRate = audioCtx.sampleRate;
+        const length = sampleRate * duration;
+        const impulse = audioCtx.createBuffer(2, length, sampleRate);
+        const left = impulse.getChannelData(0);
+        const right = impulse.getChannelData(1);
+
+        for (let i = 0; i < length; i++) {
+            const n = i / length;
+            const decay = Math.pow(1 - n, 3); 
+            left[i] = (Math.random() * 2 - 1) * decay;
+            right[i] = (Math.random() * 2 - 1) * decay;
+        }
+        return impulse;
+    }
+
+    function initAudio() {
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        audioCtx = new AudioContext();
+
+        masterGain = audioCtx.createGain();
+        masterGain.gain.value = 0.5;
+
+        convolver = audioCtx.createConvolver();
+        convolver.buffer = createReverbBuffer(2.5);
+
+        convolver.connect(masterGain);
+        masterGain.connect(audioCtx.destination);
+
+        audioStarted = true;
+    }
+
+    function playParticleNote() {
+        if (!audioStarted) return;
+
+        const theme = THEMES[currentThemeIndex];
+        const noteFreq = theme.chord[Math.floor(Math.random() * theme.chord.length)];
+        const finalFreq = (Math.random() > 0.9) ? noteFreq * 2 : noteFreq;
+
+        const osc1 = audioCtx.createOscillator();
+        const osc2 = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+
+        osc1.type = 'sine';
+        osc2.type = 'triangle';
+
+        osc1.frequency.value = finalFreq;
+        osc2.frequency.value = finalFreq; 
+
+        const now = audioCtx.currentTime;
+        gain.gain.setValueAtTime(0, now);
+        gain.gain.linearRampToValueAtTime(0.08, now + 0.01); 
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.4); 
+
+        osc1.connect(gain);
+        osc2.connect(gain);
+        gain.connect(convolver); 
+
+        osc1.start(now);
+        osc2.start(now);
+        
+        osc1.stop(now + 0.5);
+        osc2.stop(now + 0.5);
+    }
+
+    function resize() {
+        width = window.innerWidth;
+        height = window.innerHeight;
+        canvas.width = width; canvas.height = height;
+        centerX = width / 2; centerY = height / 2;
+        limitDistance = Math.max(width, height) * 1.5;
+        
+        if (!isStarted) {
+            ctx.fillStyle = '#000';
+            ctx.fillRect(0, 0, width, height);
+        }
+    }
+
+    class Particle {
+        constructor() {
+            this.x = 0; this.y = 0;
+            this.startDelay = Math.random() * 200;
+            this.firstRun = true;
+            this.reset(true);
+        }
+
+        reset(silent = false) {
+            this.x = 0;
+            this.y = 0;
+
+            let segmentAngle = (Math.PI * 2) / structureBase;
+            let chosenSide = Math.floor(Math.random() * structureBase);
+            let baseAngle = chosenSide * segmentAngle;
+            let variance = (Math.random() - 0.5) * segmentAngle * 0.4; 
+            
+            this.angle = baseAngle + variance;
+            this.speed = Math.random() * 3 + 2; 
+            this.size = Math.random() * 4.0 + 2.0;
+            
+            let themeHue = THEMES[currentThemeIndex].hue;
+            let hueVariance = Math.random() * 30 - 15; 
+            this.color = `hsl(${themeHue + hueVariance}, 90%, 60%)`; 
+            
+            this.alpha = 0; 
+            this.fadeIn = true;
+
+            if (!silent && !this.firstRun && audioStarted) {
+                if (Math.random() > 0.2) { 
+                    playParticleNote();
+                }
+            }
+            this.firstRun = false;
+        }
+
+        update() {
+            if (this.startDelay > 0) {
+                this.startDelay--;
+                if (this.startDelay <= 0) {
+                    if (audioStarted && Math.random() > 0.2) {
+                        playParticleNote();
+                    }
+                }
+                return; 
+            }
+
+            let currentSpeed = this.speed * speedMultiplier;
+            this.x += Math.cos(this.angle + rotationOffset) * currentSpeed;
+            this.y += Math.sin(this.angle + rotationOffset) * currentSpeed;
+            let dist = Math.sqrt(this.x*this.x + this.y*this.y);
+            
+            if (this.fadeIn) {
+                this.alpha += 0.04; 
+                if (this.alpha >= 1) this.fadeIn = false;
+            }
+            if (dist > limitDistance) {
+                this.reset();
+            }
+        }
+
+        draw(context) {
+            if (this.startDelay > 0) return;
+            context.beginPath();
+            context.fillStyle = this.color;
+            context.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+            context.fill();
+        }
+    }
+
+    function handleInput(clientX, clientY) {
+        let positionY = clientY / window.innerHeight;
+        speedMultiplier = ((1 - positionY) * 2.5) + 0.05; 
+
+        let positionX = clientX / window.innerWidth;
+        activeParticleCount = Math.floor(positionX * MAX_PARTICLES);
+        if (activeParticleCount < 1) activeParticleCount = 1;
+    }
+
+    function handleInteraction() {
+        if (!isStarted) {
+            isStarted = true;
+            
+            // --- CÓDIGO CORRIGIDO AQUI ---
+            startText.style.animation = 'none'; // Desliga o pulse
+            startText.style.opacity = '0';      // Faz sumir
+            setTimeout(() => { if (startText.parentNode) startText.remove(); }, 1000); // Deleta do HTML
+            
+            initAudio();
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+            animate();
+            return; 
+        }
+
+        if (!audioStarted) {
+            initAudio();
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+        }
+        
+        currentThemeIndex = (currentThemeIndex + 1) % THEMES.length;
+        particles.forEach((p, i) => { if(i%3===0) p.reset(true); });
+    }
+
+    function init() {
+        resize();
+        ctx.fillStyle = '#000';
+        ctx.fillRect(0, 0, width, height);
+
+        for (let i = 0; i < MAX_PARTICLES; i++) { particles.push(new Particle()); }
+        
+        window.addEventListener('resize', resize);
+        window.addEventListener('mousedown', handleInteraction);
+        window.addEventListener('mousemove', (e) => handleInput(e.clientX, e.clientY));
+
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            handleInteraction(); 
+            let t = e.touches[0];
+            handleInput(t.clientX, t.clientY);
+        }, { passive: false });
+
+        canvas.addEventListener('touchmove', (e) => {
+            e.preventDefault();
+            let t = e.touches[0];
+            handleInput(t.clientX, t.clientY);
+        }, { passive: false });
+    }
+
+    function animate() {
+        if (!isStarted) return; 
+
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.08)'; 
+        ctx.fillRect(0, 0, width, height);
+
+        ctx.save();
+        ctx.translate(centerX, centerY);
+        rotationOffset += 0.002 * speedMultiplier;
+
+        for (let i = 0; i < activeParticleCount; i++) {
+            particles[i].update();
+        }
+
+        for (let i = 0; i < slices; i++) {
+            ctx.save();
+            ctx.rotate(i * angleStep);
+            
+            for (let j = 0; j < activeParticleCount; j++) {
+                particles[j].draw(ctx);
+            }
+            ctx.scale(1, -1); 
+            for (let j = 0; j < activeParticleCount; j++) {
+                particles[j].draw(ctx);
+            }
+            ctx.restore();
+        }
+
+        ctx.restore();
+        requestAnimationFrame(animate);
+    }
+
+    init();
+
+</script>
+</body>
+</html>

@@ -1,0 +1,1732 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Chakra Light Dance</title>
+  <link rel="manifest" href="data:application/json,{%22display%22:%22fullscreen%22,%22orientation%22:%22landscape%22}">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+  <script>
+    const _origLog = console.log;
+    console.log = function(...args) {
+      if (args[0] && typeof args[0] === 'string' && args[0].includes('Tone.js')) return;
+      _origLog.apply(console, args);
+    };
+  </script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+  <script>p5.disableFriendlyErrors = true;</script>
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    body {
+      background: #0a0a0f;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: 'Orbitron', sans-serif;
+      color: #e0e0e0;
+      overflow: hidden;
+    }
+    .instrument {
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      width: 100vw;
+    }
+    .left-panel {
+      position: absolute;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 0.6rem;
+      align-items: center;
+      padding-top: 1.5rem;
+      padding-bottom: 1.5rem;
+      justify-content: space-between;
+    }
+    .left-top {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+      align-items: center;
+    }
+    .left-bottom {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+      align-items: center;
+    }
+    .left-panel button {
+      width: auto;
+      text-align: center;
+    }
+    #canvas-container {
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    #palette-tiles {
+      display: grid;
+      grid-template-columns: auto auto;
+      gap: 0;
+      justify-content: center;
+    }
+    button.color-swatch {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0;
+      border: none;
+      background: none;
+      cursor: pointer;
+    }
+    button.color-swatch:hover {
+      border: none;
+      background: none;
+    }
+    button.color-swatch.active .swatch-canvas {
+      box-shadow: 0 0 12px rgba(255,255,255,0.6);
+    }
+    .swatch-canvas {
+      border-radius: 4px;
+      flex-shrink: 0;
+      cursor: pointer;
+    }
+    .right-panel {
+      position: absolute;
+      right: 0;
+      top: 50%;
+      transform: translateY(-50%);
+      display: flex;
+      flex-direction: column;
+      gap: 0.6rem;
+      align-items: center;
+    }
+    .right-panel button {
+      width: auto;
+      text-align: center;
+    }
+    #choreography-buttons {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+    #power-btn {
+      border-width: 1px;
+      letter-spacing: 0.1em;
+      text-align: center !important;
+      text-transform: uppercase;
+    }
+    #power-btn.active {
+      color: #fff;
+      border-color: rgba(255,255,255,0.4);
+      background: rgba(255,255,255,0.08);
+      box-shadow: 0 0 20px rgba(255,255,255,0.15), inset 0 0 12px rgba(255,255,255,0.05);
+      text-shadow: 0 0 8px rgba(255,255,255,0.6);
+    }
+    button {
+      background: rgba(255,255,255,0.02);
+      border: 1px solid rgba(255,255,255,0.08);
+      color: rgba(255,255,255,0.35);
+      padding: 0.5rem 0.6rem;
+      font-family: inherit;
+      font-size: 0.85rem;
+      letter-spacing: 0.1em;
+      cursor: pointer;
+      transition: all 0.4s ease;
+      text-transform: capitalize;
+      white-space: nowrap;
+      border-radius: 4px;
+    }
+    button:hover {
+      background: rgba(255,255,255,0.05);
+      border-color: rgba(255,255,255,0.15);
+      color: rgba(255,255,255,0.7);
+    }
+    button.active {
+      color: #fff;
+      background: rgba(255,255,255,0.06);
+      border-color: rgba(255,255,255,0.2);
+    }
+    button[data-glow].active {
+      text-shadow: 0 0 6px currentColor;
+    }
+    button[data-glow]:hover {
+      text-shadow: 0 0 4px rgba(255,255,255,0.3);
+    }
+    #rotate-overlay {
+      display: none;
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: #0a0a0f;
+      z-index: 9999;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 1.5rem;
+      color: rgba(255,255,255,0.5);
+      font-family: 'Orbitron', sans-serif;
+      font-size: 0.85rem;
+      letter-spacing: 0.15em;
+    }
+    #rotate-overlay svg {
+      width: 60px;
+      height: 60px;
+      opacity: 0.4;
+      animation: rotateHint 2s ease-in-out infinite;
+    }
+    @keyframes rotateHint {
+      0%, 100% { transform: rotate(0deg); }
+      50% { transform: rotate(90deg); }
+    }
+    @media (orientation: portrait) and (max-width: 768px) {
+      #rotate-overlay { display: flex; }
+      .instrument { display: none !important; }
+    }
+    @media (max-height: 500px), (max-width: 900px) {
+      button {
+        font-size: 0.65rem;
+        padding: 0.35rem 0.45rem;
+        letter-spacing: 0.05em;
+      }
+      #power-btn {
+        font-size: 0.7rem;
+        letter-spacing: 0.1em;
+      }
+    }
+  </style>
+</head>
+<body oncontextmenu="return false;">
+  <div id="rotate-overlay">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+      <rect x="4" y="2" width="16" height="20" rx="2" />
+      <path d="M12 18h.01" />
+    </svg>
+    <span>rotate to landscape</span>
+  </div>
+  <div class="instrument">
+    <div class="left-panel">
+      <div class="left-top">
+        <button onclick="toggleMachine()" id="power-btn" data-glow="255,255,255">play</button>
+        <button onclick="setChoreography('sequencer')" id="seq-btn" data-glow="180,100,200" style="text-align:center">sequencer</button>
+      </div>
+      <div id="palette-section" style="display:none">
+        <button onclick="clearSequencer()" id="clear-btn" data-glow="255,255,255" style="text-align:center; margin-bottom:0.3rem; box-sizing:border-box">clear all</button>
+        <div id="palette-tiles">
+        <button onclick="selectPaintColor(1)" class="color-swatch" id="swatch-1"><canvas class="swatch-canvas"></canvas></button>
+        <button onclick="selectPaintColor(5)" class="color-swatch" id="swatch-5"><canvas class="swatch-canvas"></canvas></button>
+        <button onclick="selectPaintColor(2)" class="color-swatch" id="swatch-2"><canvas class="swatch-canvas"></canvas></button>
+        <button onclick="selectPaintColor(6)" class="color-swatch" id="swatch-6"><canvas class="swatch-canvas"></canvas></button>
+        <button onclick="selectPaintColor(3)" class="color-swatch" id="swatch-3"><canvas class="swatch-canvas"></canvas></button>
+        <button onclick="selectPaintColor(7)" class="color-swatch" id="swatch-7"><canvas class="swatch-canvas"></canvas></button>
+        <button onclick="selectPaintColor(4)" class="color-swatch" id="swatch-4"><canvas class="swatch-canvas"></canvas></button>
+        <button onclick="selectPaintColor(0)" class="color-swatch" id="swatch-0"><canvas class="swatch-canvas"></canvas></button>
+        </div>
+      </div>
+      <div class="left-bottom">
+        <button onclick="toggleWalkers()" id="walkers-btn" data-glow="255,255,255">walkers</button>
+        <button onclick="toggleInverse()" id="inverse-btn" data-glow="255,255,255">inverse</button>
+      </div>
+    </div>
+    <div id="canvas-container"></div>
+    <div class="right-panel" id="right-panel">
+      <div id="choreography-buttons">
+        <button onclick="setChoreography('breath')" data-glow="220,47,47">breath</button>
+        <button onclick="setChoreography('spiral')" data-glow="255,140,50">spiral</button>
+        <button onclick="setChoreography('wave')" data-glow="255,220,60">wave</button>
+        <button onclick="setChoreography('bloom')" data-glow="80,200,120">bloom</button>
+        <button onclick="setChoreography('mirror')" data-glow="70,160,220">mirror</button>
+        <button onclick="setChoreography('rain')" data-glow="100,80,180">rain</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+// Chakra colors + white + black (9 colors)
+const COLORS = {
+  root:     [220, 47, 47],     // red - muladhara
+  sacral:   [255, 140, 50],    // orange - svadhisthana  
+  solar:    [255, 220, 60],    // yellow - manipura
+  heart:    [80, 200, 120],    // green - anahata
+  throat:   [70, 160, 220],    // blue - vishuddha
+  third:    [100, 80, 180],    // indigo - ajna
+  crown:    [180, 100, 200],   // violet - sahasrara
+  white:    [255, 255, 255],
+  black:    [10, 10, 15]
+};
+
+const CHAKRA_ORDER = ['root', 'sacral', 'solar', 'heart', 'throat', 'third', 'crown'];
+
+const GRID_SIZE = 8;
+let CELL_SIZE = 64;
+const GAP = 0;
+
+let grid = [];
+let targetGrid = [];
+let sequencerGrid = []; // Color index per cell (0=off, 1-7=chakras)
+let time = 0;
+let paused = true;
+let ripples = [];
+let walkersEnabled = true;
+let inverseEnabled = true;
+let soundEnabled = false;
+let audioStarted = false;
+let sequencerMode = false;
+let playheadY = 0;
+let lastStepTime = 0;
+let stepInterval = 0.4; // Seconds per row
+let paintColor = -1; // -1=cycle mode, 0-7=paint mode
+let isMobileDevice = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
+
+const COLOR_CYCLE = ['white', 'root', 'sacral', 'solar', 'heart', 'throat', 'third', 'crown'];
+
+// Sound system
+let octaveSynths = []; // 8 synths, one per column/octave
+let lastNotes = {};
+let noteDecay = {};
+let triggerFlash = [0, 0, 0, 0, 0, 0, 0, 0]; // Flash intensity per column
+let triggerFlashRow = [0, 0, 0, 0, 0, 0, 0, 0]; // Which row the flash belongs to
+let lastTriggerTime = [0, 0, 0, 0, 0, 0, 0, 0]; // Per-column cooldown timestamp
+
+// === UNIFIED A/V PIPELINE DELAY ===
+// Both audio and video are delayed by the same amount so they stay in sync
+// while giving the CPU breathing room to prepare frames and audio buffers.
+const AV_DELAY = 0.5; // 500ms — generous CPU headroom for smooth audio
+let visualEventQueue = []; // {fireAt, type, data} — delayed visual triggers
+
+// Choreographies that read the grid row-by-row like the sequencer
+const SEQUENCER_READ_CHOREOGRAPHIES = new Set(['breath', 'bloom', 'mirror']);
+// D -> A -> E -> B -> F# -> C# -> G#
+const SWAR_FREQUENCIES = {
+  root:   293.66,   // D4 - Red
+  sacral: 440.00,   // A4 - Orange (fifth above D)
+  solar:  659.25,   // E5 - Yellow (fifth above A)
+  heart:  493.88,   // B4 - Green (fifth above E, dropped octave)
+  throat: 739.99,   // F#5 - Blue (fifth above B)
+  third:  554.37,   // C#5 - Indigo (fifth above F#, dropped octave)
+  crown:  415.30    // G#4 - Violet (fifth above C#, dropped octave)
+};
+let choreography = 'rain';
+
+function setup() {
+  // Reserve space for panels on each side
+  let panelSpace = 120;
+  let padding = 40;
+  
+  let availableWidth = windowWidth - (panelSpace * 2) - padding;
+  let availableHeight = windowHeight - padding;
+  let maxCellFromWidth = floor(availableWidth / GRID_SIZE);
+  let maxCellFromHeight = floor(availableHeight / GRID_SIZE);
+  CELL_SIZE = min(maxCellFromWidth, maxCellFromHeight);
+  let canvasSize = CELL_SIZE * GRID_SIZE;
+  
+  let canvas = createCanvas(canvasSize, canvasSize);
+  canvas.parent('canvas-container');
+  
+  // Initialize grids
+  for (let y = 0; y < GRID_SIZE; y++) {
+    grid[y] = [];
+    targetGrid[y] = [];
+    sequencerGrid[y] = [];
+    for (let x = 0; x < GRID_SIZE; x++) {
+      grid[y][x] = [...COLORS.white];
+      targetGrid[y][x] = [...COLORS.white];
+      sequencerGrid[y][x] = 0;
+    }
+  }
+  
+  frameRate(24);
+  
+  // Set initial button states
+  document.getElementById('walkers-btn').classList.add('active');
+  document.getElementById('inverse-btn').classList.add('active');
+  document.querySelectorAll('#choreography-buttons button').forEach(btn => {
+    btn.classList.toggle('active', btn.textContent === 'rain');
+  });
+  
+  // Render palette swatch tiles
+  setTimeout(renderPaletteSwatches, 100);
+  setTimeout(updateButtonGlows, 50);
+  setTimeout(positionPanels, 50);
+}
+
+function positionPanels() {
+  let canvasEl = document.querySelector('#canvas-container canvas');
+  if (!canvasEl) return;
+  let rect = canvasEl.getBoundingClientRect();
+  let leftPanel = document.querySelector('.left-panel');
+  let rightPanel = document.querySelector('.right-panel');
+  
+  // Left panel: centered between left screen edge and grid
+  let leftSpace = rect.left;
+  leftPanel.style.left = '0';
+  leftPanel.style.right = 'auto';
+  leftPanel.style.width = leftSpace + 'px';
+  
+  // Right panel: centered between grid and right screen edge
+  let rightSpace = window.innerWidth - rect.right;
+  rightPanel.style.left = rect.right + 'px';
+  rightPanel.style.right = 'auto';
+  rightPanel.style.width = rightSpace + 'px';
+}
+
+function windowResized() {
+  let panelSpace = 120;
+  let padding = 40;
+  let availableWidth = windowWidth - (panelSpace * 2) - padding;
+  let availableHeight = windowHeight - padding;
+  let maxCellFromWidth = floor(availableWidth / GRID_SIZE);
+  let maxCellFromHeight = floor(availableHeight / GRID_SIZE);
+  CELL_SIZE = min(maxCellFromWidth, maxCellFromHeight);
+  let canvasSize = CELL_SIZE * GRID_SIZE;
+  
+  resizeCanvas(canvasSize, canvasSize);
+  if (sequencerMode) renderPaletteSwatches();
+  positionPanels();
+}
+
+function draw() {
+  background(10, 10, 15);
+  
+  // Always advance time for visual animation
+  time += deltaTime * 0.001;
+  
+  // === DRAIN VISUAL EVENT QUEUE (fires in sync with delayed audio) ===
+  let now_ms = performance.now();
+  for (let i = visualEventQueue.length - 1; i >= 0; i--) {
+    let evt = visualEventQueue[i];
+    if (now_ms >= evt.fireAt) {
+      triggerFlash[evt.data.x] = 1.0;
+      triggerFlashRow[evt.data.x] = evt.data.row;
+      visualEventQueue.splice(i, 1);
+    }
+  }
+  
+  let pendingChoreographyTrigger = false;
+  
+  if (sequencerMode) {
+    // Sequencer: step through rows only when playing
+    if (!paused) {
+      if (time - lastStepTime >= stepInterval) {
+        playheadY = (playheadY + 1) % GRID_SIZE;
+        lastStepTime = time;
+        
+        // Trigger notes for this row
+        if (soundEnabled && audioStarted) {
+          triggerSequencerRow(playheadY);
+        }
+      }
+    }
+    
+    // Always show sequencer grid
+    for (let y = 0; y < GRID_SIZE; y++) {
+      for (let x = 0; x < GRID_SIZE; x++) {
+        let colorName = COLOR_CYCLE[sequencerGrid[y][x]];
+        if (sequencerGrid[y][x] === 0) {
+          // Empty slot: 50% opaque white
+          targetGrid[y][x] = [133, 133, 135];
+        } else {
+          targetGrid[y][x] = [...COLORS[colorName]];
+        }
+      }
+    }
+  } else if (choreography) {
+    // Always animate choreography pattern
+    updateChoreography();
+    updateRipples();
+    
+    // For breath/bloom/mirror: step through rows like the sequencer
+    if (!paused && SEQUENCER_READ_CHOREOGRAPHIES.has(choreography)) {
+      if (time - lastStepTime >= stepInterval) {
+        playheadY = (playheadY + 1) % GRID_SIZE;
+        // Snap to grid — prevents frame-rate-dependent drift
+        lastStepTime += stepInterval;
+        // If we fell behind (e.g. tab was backgrounded), catch up
+        if (time - lastStepTime >= stepInterval) lastStepTime = time;
+        pendingChoreographyTrigger = true;
+      }
+    }
+  }
+  
+  // Apply walkers/inverse layers (always animate if enabled)
+  if (walkersEnabled) {
+    applyWalkersLayer();
+  }
+  if (inverseEnabled) {
+    applyInverseLayer();
+  }
+  
+  // Trigger choreography row AFTER walkers/inverse so white-painted cells stay silent
+  // Recompute the pattern at the exact snapped step time for deterministic results
+  if (pendingChoreographyTrigger && soundEnabled && audioStarted) {
+    let savedTime = time;
+    time = lastStepTime;
+    // Recompute targetGrid at the exact step moment
+    updateChoreography();
+    if (walkersEnabled) applyWalkersLayer();
+    if (inverseEnabled) applyInverseLayer();
+    triggerChoreographyRow(playheadY);
+    time = savedTime;
+    // Restore visual targetGrid to current frame's animation state
+    updateChoreography();
+    if (walkersEnabled) applyWalkersLayer();
+    if (inverseEnabled) applyInverseLayer();
+  }
+  
+  // Smooth color transitions (frame-rate independent)
+  let lerpFactor = 1 - Math.pow(1 - 0.15, deltaTime * 0.06);
+  for (let y = 0; y < GRID_SIZE; y++) {
+    for (let x = 0; x < GRID_SIZE; x++) {
+      for (let i = 0; i < 3; i++) {
+        grid[y][x][i] = lerp(grid[y][x][i], targetGrid[y][x][i], lerpFactor);
+      }
+    }
+  }
+  
+  // Update sound for bottom-row-reading choreographies (spiral, wave, rain)
+  if (!paused && soundEnabled && audioStarted && !sequencerMode) {
+    if (choreography && !SEQUENCER_READ_CHOREOGRAPHIES.has(choreography)) {
+      updateSound();
+    }
+  }
+  
+  // Decay trigger flashes (frame-rate independent)
+  let flashDecay = Math.pow(0.88, deltaTime * 0.06);
+  for (let i = 0; i < GRID_SIZE; i++) {
+    if (triggerFlash[i] > 0) {
+      triggerFlash[i] *= flashDecay;
+      if (triggerFlash[i] < 0.01) triggerFlash[i] = 0;
+    }
+  }
+  
+  // Draw grid
+  for (let y = 0; y < GRID_SIZE; y++) {
+    for (let x = 0; x < GRID_SIZE; x++) {
+      let px = GAP + x * (CELL_SIZE + GAP);
+      let py = GAP + y * (CELL_SIZE + GAP);
+      
+      let col = grid[y][x];
+      let r = col[0], g = col[1], b = col[2];
+      
+      // Note trigger surge: amplify the cell's own color toward full saturation
+      let surge = 0;
+      if (triggerFlash[x] > 0 && y === triggerFlashRow[x]) {
+        surge = triggerFlash[x];
+        // Push color channels toward their peak — the cell becomes more of itself
+        let peak = Math.max(r, g, b, 1);
+        let boost = surge * 0.35;
+        r = min(255, r + (r / peak) * 255 * boost);
+        g = min(255, g + (g / peak) * 255 * boost);
+        b = min(255, b + (b / peak) * 255 * boost);
+      }
+      
+      // Glow effect — only apply expensive shadowBlur to surging cells
+      let brightness = (r + g + b) / 3;
+      if (surge > 0.1) {
+        let surgeShadow = surge * CELL_SIZE * 0.3;
+        drawingContext.shadowBlur = surgeShadow;
+        drawingContext.shadowColor = `rgb(${r}, ${g}, ${b})`;
+      } else {
+        drawingContext.shadowBlur = 0;
+      }
+      
+      fill(r, g, b);
+      noStroke();
+      rect(px, py, CELL_SIZE, CELL_SIZE, 4);
+      
+      // Draw playhead line in sequencer mode or sequencer-read choreographies
+      let showPlayhead = sequencerMode || (choreography && SEQUENCER_READ_CHOREOGRAPHIES.has(choreography));
+      if (showPlayhead && y === playheadY && !paused) {
+        noFill();
+        stroke(255, 255, 255, 60);
+        strokeWeight(2);
+        rect(px, py, CELL_SIZE, CELL_SIZE, 4);
+      }
+      
+      // Draw glyph — surging cells get a slightly larger, brighter glyph
+      drawingContext.shadowBlur = 0;
+      let glyphScale = 1.0 + surge * 0.25;
+      let glyphSize = CELL_SIZE * 0.50 * glyphScale;
+      let cx = px + CELL_SIZE / 2;
+      let cy = py + CELL_SIZE / 2;
+      
+      // Find dominant chakra for this cell
+      let dominantChakra = getDominantChakra([r, g, b]);
+      if (dominantChakra && dominantChakra !== 'white' && brightness > 20) {
+        let glyphAlpha = 180 + surge * 75;
+        stroke(0, 0, 0, glyphAlpha);
+        strokeWeight(2 + surge);
+        noFill();
+        drawGlyph(dominantChakra, cx, cy, glyphSize);
+      }
+    }
+  }
+  
+  drawingContext.shadowBlur = 0;
+}
+
+function updateChoreography() {
+  // If no choreography selected, set to black
+  if (!choreography) {
+    for (let y = 0; y < GRID_SIZE; y++) {
+      for (let x = 0; x < GRID_SIZE; x++) {
+        targetGrid[y][x] = [...COLORS.black];
+      }
+    }
+  } else {
+    switch(choreography) {
+      case 'breath':
+        choreographyBreath();
+        break;
+      case 'spiral':
+        choreographySpiral();
+        break;
+      case 'wave':
+        choreographyWave();
+        break;
+      case 'bloom':
+        choreographyBloom();
+        break;
+      case 'mirror':
+        choreographyMirror();
+        break;
+      case 'rain':
+        choreographyRain();
+        break;
+    }
+  }
+}
+
+// === CHOREOGRAPHIES ===
+
+function choreographyBreath() {
+  // Slow expansion and contraction from center, like lungs
+  let breathPhase = sin(time * 1.6) * 0.5 + 0.5;
+  let center = 3.5;
+  
+  for (let y = 0; y < GRID_SIZE; y++) {
+    for (let x = 0; x < GRID_SIZE; x++) {
+      let dist = sqrt(pow(x - center, 2) + pow(y - center, 2));
+      let maxDist = sqrt(2) * center;
+      let normalizedDist = dist / maxDist;
+      
+      let wave = sin(normalizedDist * PI * 2 - time * 3);
+      let intensity = map(wave * breathPhase, -1, 1, 0, 1);
+      
+      let chakraIndex = floor(map(normalizedDist, 0, 1, 0, 7)) % 7;
+      let col = COLORS[CHAKRA_ORDER[chakraIndex]];
+      
+      targetGrid[y][x] = lerpColor3(COLORS.black, col, intensity);
+    }
+  }
+}
+
+function choreographySpiral() {
+  // Golden spiral ascending through chakras
+  let center = 3.5;
+  
+  for (let y = 0; y < GRID_SIZE; y++) {
+    for (let x = 0; x < GRID_SIZE; x++) {
+      let dx = x - center;
+      let dy = y - center;
+      let angle = atan2(dy, dx);
+      let dist = sqrt(dx * dx + dy * dy);
+      
+      let spiralPhase = (angle + PI) / TWO_PI + dist * 0.15 - time * 0.25;
+      spiralPhase = ((spiralPhase % 1) + 1) % 1;
+      
+      let chakraIndex = floor(spiralPhase * 7);
+      let col = COLORS[CHAKRA_ORDER[chakraIndex]];
+      
+      let intensity = sin(spiralPhase * PI) * 0.8 + 0.2;
+      intensity *= map(dist, 0, 5, 0.3, 1);
+      
+      targetGrid[y][x] = lerpColor3(COLORS.black, col, intensity);
+    }
+  }
+}
+
+function choreographyWave() {
+  // Horizontal waves moving like dancers across stage
+  for (let y = 0; y < GRID_SIZE; y++) {
+    for (let x = 0; x < GRID_SIZE; x++) {
+      let wave1 = sin(x * 0.5 + time * 1) * 0.5 + 0.5;
+      let wave2 = sin(y * 0.7 - time * 0.75) * 0.5 + 0.5;
+      let wave3 = sin((x + y) * 0.3 + time * 0.5) * 0.5 + 0.5;
+      
+      let combined = (wave1 + wave2 + wave3) / 3;
+      
+      let chakraIndex = floor(combined * 7);
+      let col = COLORS[CHAKRA_ORDER[chakraIndex]];
+      
+      let intensity = pow(combined, 0.7);
+      targetGrid[y][x] = lerpColor3(COLORS.black, col, intensity);
+    }
+  }
+}
+
+function choreographyBloom() {
+  // Flowers blooming and closing
+  let center = 3.5;
+  let petalCount = 6;
+  
+  for (let y = 0; y < GRID_SIZE; y++) {
+    for (let x = 0; x < GRID_SIZE; x++) {
+      let dx = x - center;
+      let dy = y - center;
+      let angle = atan2(dy, dx);
+      let dist = sqrt(dx * dx + dy * dy);
+      
+      let petalPhase = sin(angle * petalCount + time * 2.0);
+      let bloom = sin(time * 1.3) * 0.5 + 0.5;
+      
+      let petalRadius = (3.5 + petalPhase * 2.5) * bloom;
+      let inPetal = dist < petalRadius;
+      
+      let intensity = inPetal ? map(dist, 0, petalRadius, 1, 0.3) : 0;
+      intensity *= bloom;
+      
+      // Color gradient from center
+      let chakraIndex = floor(map(dist, 0, 5.5, 6, 0));
+      chakraIndex = constrain(chakraIndex, 0, 6);
+      let col = COLORS[CHAKRA_ORDER[chakraIndex]];
+      
+      targetGrid[y][x] = lerpColor3(COLORS.black, col, intensity);
+    }
+  }
+}
+
+function choreographyMirror() {
+  // Four-fold symmetry, dancers mirroring each other
+  let phase = time * 0.2;
+  
+  for (let y = 0; y < 4; y++) {
+    for (let x = 0; x < 4; x++) {
+      let wave = sin(x * 0.8 + phase) * sin(y * 0.8 + phase * 0.7);
+      wave = wave * 0.5 + 0.5;
+      
+      let diagonal = sin((x + y) * 0.5 - time * 0.3) * 0.5 + 0.5;
+      let combined = (wave + diagonal) / 2;
+      
+      let chakraIndex = floor(combined * 7);
+      let col = COLORS[CHAKRA_ORDER[chakraIndex]];
+      
+      // Sharp curve: most tiles dark, bright tiles glow intensely
+      let intensity = pow(combined, 1.5);
+      if (combined > 0.7) {
+        intensity = pow(combined, 0.5); // boost bright tiles to full glow
+      }
+      let cellColor = lerpColor3(COLORS.black, col, intensity);
+      
+      // Mirror to all four quadrants
+      targetGrid[y][x] = cellColor;
+      targetGrid[y][7 - x] = cellColor;
+      targetGrid[7 - y][x] = cellColor;
+      targetGrid[7 - y][7 - x] = cellColor;
+    }
+  }
+}
+
+function choreographyRain() {
+  // Drops falling like tears or blessings
+  let drops = [];
+  let numDrops = 12;
+  
+  for (let i = 0; i < numDrops; i++) {
+    let seed = i * 137.5;
+    let dropX = floor((sin(seed) * 0.5 + 0.5) * 8);
+    let dropY = ((time * 0.25 + seed * 0.01) % 1.5) * 10 - 2;
+    drops.push({ x: dropX, y: dropY, chakra: i % 7 });
+  }
+  
+  for (let y = 0; y < GRID_SIZE; y++) {
+    for (let x = 0; x < GRID_SIZE; x++) {
+      let maxIntensity = 0;
+      let dominantColor = COLORS.black;
+      
+      for (let drop of drops) {
+        let dist = sqrt(pow(x - drop.x, 2) + pow(y - drop.y, 2));
+        let intensity = exp(-dist * 0.8);
+        
+        if (intensity > maxIntensity) {
+          maxIntensity = intensity;
+          dominantColor = COLORS[CHAKRA_ORDER[drop.chakra]];
+        }
+      }
+      
+      targetGrid[y][x] = lerpColor3(COLORS.black, dominantColor, maxIntensity);
+    }
+  }
+}
+
+// === RIPPLE EFFECT ===
+
+function updateRipples() {
+  for (let i = ripples.length - 1; i >= 0; i--) {
+    let r = ripples[i];
+    r.radius += deltaTime * 0.01;
+    r.intensity *= 0.97;
+    
+    if (r.intensity < 0.05) {
+      ripples.splice(i, 1);
+      continue;
+    }
+    
+    for (let y = 0; y < GRID_SIZE; y++) {
+      for (let x = 0; x < GRID_SIZE; x++) {
+        let dist = sqrt(pow(x - r.x, 2) + pow(y - r.y, 2));
+        let ringDist = abs(dist - r.radius);
+        
+        if (ringDist < 1.5) {
+          let ringIntensity = (1 - ringDist / 1.5) * r.intensity;
+          let current = targetGrid[y][x];
+          targetGrid[y][x] = lerpColor3(current, r.color, ringIntensity * 0.5);
+        }
+      }
+    }
+  }
+}
+
+function mousePressed() {
+  let cellX = floor((mouseX - GAP) / (CELL_SIZE + GAP));
+  let cellY = floor((mouseY - GAP) / (CELL_SIZE + GAP));
+  
+  if (cellX >= 0 && cellX < GRID_SIZE && cellY >= 0 && cellY < GRID_SIZE) {
+    if (sequencerMode) {
+      if (mouseButton === RIGHT) {
+        sequencerGrid[cellY][cellX] = 0;
+      } else if (paintColor === 0) {
+        // Eraser mode: always erase to empty, stay in palette mode
+        sequencerGrid[cellY][cellX] = 0;
+      } else if (paintColor > 0) {
+        // Paint mode: always paint with selected color
+        sequencerGrid[cellY][cellX] = paintColor;
+      } else {
+        // Cycle mode
+        sequencerGrid[cellY][cellX] = (sequencerGrid[cellY][cellX] + 1) % 8;
+      }
+    } else {
+      let chakraIndex = floor(random(7));
+      ripples.push({
+        x: cellX,
+        y: cellY,
+        radius: 0,
+        intensity: 1,
+        color: COLORS[CHAKRA_ORDER[chakraIndex]]
+      });
+    }
+  }
+}
+
+function mouseDragged() {
+  if (!sequencerMode) return;
+  
+  let cellX = floor((mouseX - GAP) / (CELL_SIZE + GAP));
+  let cellY = floor((mouseY - GAP) / (CELL_SIZE + GAP));
+  
+  if (cellX >= 0 && cellX < GRID_SIZE && cellY >= 0 && cellY < GRID_SIZE) {
+    if (mouseButton === RIGHT) {
+      sequencerGrid[cellY][cellX] = 0;
+    } else if (paintColor >= 0) {
+      sequencerGrid[cellY][cellX] = paintColor;
+    }
+  }
+}
+
+function selectPaintColor(index) {
+  if (paintColor === index) {
+    // Deselect: go back to cycle mode
+    paintColor = -1;
+    document.querySelectorAll('#palette-tiles .color-swatch').forEach((btn) => {
+      btn.classList.remove('active');
+    });
+  } else {
+    paintColor = index;
+    document.querySelectorAll('#palette-tiles .color-swatch').forEach((btn) => {
+      let btnIndex = parseInt(btn.id.replace('swatch-', ''));
+      btn.classList.toggle('active', btnIndex === index);
+    });
+  }
+}
+
+function clearSequencer() {
+  for (let y = 0; y < GRID_SIZE; y++) {
+    for (let x = 0; x < GRID_SIZE; x++) {
+      sequencerGrid[y][x] = 0;
+    }
+  }
+}
+
+function keyPressed() {
+  if (key === ' ') {
+    toggleMachine();
+  }
+}
+
+function toggleMachine() {
+  paused = !paused;
+  
+  // Toggle sound with animation
+  if (!paused) {
+    if (!soundEnabled) {
+      soundEnabled = true;
+    }
+    if (!audioStarted) {
+      initSound();
+    }
+    document.getElementById('power-btn').textContent = 'stop';
+    document.getElementById('power-btn').classList.add('active');
+  } else {
+    document.getElementById('power-btn').textContent = 'play';
+    document.getElementById('power-btn').classList.remove('active');
+  }
+  updateButtonGlows();
+}
+
+function clearSequencer() {
+  for (let y = 0; y < GRID_SIZE; y++) {
+    for (let x = 0; x < GRID_SIZE; x++) {
+      sequencerGrid[y][x] = 0;
+    }
+  }
+}
+
+// Try to lock landscape on mobile
+document.addEventListener('click', function() {
+  if (document.documentElement.requestFullscreen && /Mobi|Android/i.test(navigator.userAgent)) {
+    document.documentElement.requestFullscreen().then(() => {
+      if (screen.orientation && screen.orientation.lock) {
+        screen.orientation.lock('landscape').catch(() => {});
+      }
+    }).catch(() => {});
+  }
+}, { once: true });
+
+// === UTILITIES ===
+
+function lerpColor3(c1, c2, amt) {
+  return [
+    lerp(c1[0], c2[0], amt),
+    lerp(c1[1], c2[1], amt),
+    lerp(c1[2], c2[2], amt)
+  ];
+}
+
+function getDominantChakra(col) {
+  let r = col[0];
+  let g = col[1];
+  let b = col[2];
+  
+  let brightness = (r + g + b) / 3;
+  
+  // Too dark - no glyph
+  if (brightness < 25) {
+    return null;
+  }
+  
+  // Check for white first (all channels high and similar)
+  let maxChannel = Math.max(r, g, b);
+  let minChannel = Math.min(r, g, b);
+  let saturation = maxChannel > 0 ? (maxChannel - minChannel) / maxChannel : 0;
+  
+  if (brightness > 200 && saturation < 0.15) {
+    return 'white';
+  }
+  
+  // Calculate hue
+  let hue = 0;
+  if (maxChannel === minChannel) {
+    hue = 0;
+  } else if (maxChannel === r) {
+    hue = 60 * (((g - b) / (maxChannel - minChannel)) % 6);
+  } else if (maxChannel === g) {
+    hue = 60 * ((b - r) / (maxChannel - minChannel) + 2);
+  } else {
+    hue = 60 * ((r - g) / (maxChannel - minChannel) + 4);
+  }
+  if (hue < 0) hue += 360;
+  
+  // Low saturation - no clear color
+  if (saturation < 0.2) {
+    return null;
+  }
+  
+  // Map hue ranges to chakras
+  // root (red): 0-15, 345-360
+  // sacral (orange): 15-45
+  // solar (yellow): 45-70
+  // heart (green): 70-170
+  // throat (blue): 170-220
+  // third (indigo): 220-270
+  // crown (violet/magenta): 270-345
+  
+  if (hue >= 345 || hue < 15) {
+    return 'root';
+  } else if (hue >= 15 && hue < 45) {
+    return 'sacral';
+  } else if (hue >= 45 && hue < 70) {
+    return 'solar';
+  } else if (hue >= 70 && hue < 170) {
+    return 'heart';
+  } else if (hue >= 170 && hue < 220) {
+    return 'throat';
+  } else if (hue >= 220 && hue < 270) {
+    return 'third';
+  } else if (hue >= 270 && hue < 345) {
+    return 'crown';
+  }
+  
+  return null;
+}
+
+function drawGlyph(chakra, cx, cy, size) {
+  let r = size / 2;
+  
+  push();
+  translate(cx, cy);
+  
+  switch(chakra) {
+    case 'root':
+      // Muladhara - square (prithvi/earth mandala)
+      rectMode(CENTER);
+      rect(0, 0, r * 1.4, r * 1.4);
+      break;
+      
+    case 'sacral':
+      // Svadhisthana - eye shape (water/flow/seeing into depths)
+      beginShape();
+      vertex(-r * 0.9, 0);
+      bezierVertex(-r * 0.5, -r * 0.7, r * 0.5, -r * 0.7, r * 0.9, 0);
+      bezierVertex(r * 0.5, r * 0.7, -r * 0.5, r * 0.7, -r * 0.9, 0);
+      endShape(CLOSE);
+      break;
+      
+    case 'solar':
+      // Manipura - downward triangle (fire/tejas)
+      triangle(0, r * 0.85, -r * 0.75, -r * 0.55, r * 0.75, -r * 0.55);
+      break;
+      
+    case 'heart':
+      // Anahata - two interlocking triangles (hexagram/shatkona)
+      // Upward triangle (Shiva)
+      triangle(0, -r * 0.8, -r * 0.7, r * 0.5, r * 0.7, r * 0.5);
+      // Downward triangle (Shakti)
+      triangle(0, r * 0.8, -r * 0.7, -r * 0.5, r * 0.7, -r * 0.5);
+      break;
+      
+    case 'throat':
+      // Vishuddha - circle (akasha/ether/full moon)
+      ellipse(0, 0, r * 1.5, r * 1.5);
+      break;
+      
+    case 'third':
+      // Ajna - downward triangle with bindu (point)
+      triangle(0, r * 0.7, -r * 0.65, -r * 0.45, r * 0.65, -r * 0.45);
+      // Bindu (point of consciousness)
+      fill(0, 0, 0, 180);
+      noStroke();
+      ellipse(0, r * 0.05, r * 0.2, r * 0.2);
+      break;
+      
+    case 'crown':
+      // Sahasrara - bindu within circle (thousand petals implied)
+      ellipse(0, 0, r * 1.4, r * 1.4);
+      // Central bindu
+      fill(0, 0, 0, 180);
+      noStroke();
+      ellipse(0, 0, r * 0.25, r * 0.25);
+      break;
+      
+    case 'white':
+      // Om / pure consciousness - bindu alone
+      fill(0, 0, 0, 180);
+      noStroke();
+      ellipse(0, 0, r * 0.4, r * 0.4);
+      break;
+  }
+  
+  pop();
+}
+
+function renderPaletteSwatches() {
+  let swatchNames = ['black', 'root', 'sacral', 'solar', 'heart', 'throat', 'third', 'crown'];
+  let chakraNames = [null, 'root', 'sacral', 'solar', 'heart', 'throat', 'third', 'crown'];
+  let s = floor(CELL_SIZE * 0.99);
+  if (s < 24) s = 24;
+  
+  // Size clear-all button to match palette width
+  let clearBtn = document.getElementById('clear-btn');
+  if (clearBtn) clearBtn.style.width = (s * 2) + 'px';
+  
+  for (let i = 0; i < 8; i++) {
+    let canvas = document.querySelector('#swatch-' + i + ' .swatch-canvas');
+    if (!canvas) continue;
+    
+    let ctx = canvas.getContext('2d');
+    canvas.width = s;
+    canvas.height = s;
+    canvas.style.width = s + 'px';
+    canvas.style.height = s + 'px';
+    
+    let col = COLORS[swatchNames[i]];
+    
+    // Draw tile background
+    ctx.fillStyle = `rgb(${col[0]},${col[1]},${col[2]})`;
+    ctx.beginPath();
+    ctx.roundRect(0, 0, s, s, 3);
+    ctx.fill();
+    
+    // Draw glyph if not black
+    let chakra = chakraNames[i];
+    if (chakra) {
+      ctx.strokeStyle = 'rgba(0,0,0,0.7)';
+      ctx.lineWidth = 1.5;
+      ctx.save();
+      ctx.translate(s/2, s/2);
+      let r = s * 0.25;
+      
+      switch(chakra) {
+        case 'root':
+          ctx.beginPath();
+          ctx.rect(-r*0.7, -r*0.7, r*1.4, r*1.4);
+          ctx.stroke();
+          break;
+        case 'sacral':
+          ctx.beginPath();
+          ctx.moveTo(-r*0.9, 0);
+          ctx.bezierCurveTo(-r*0.5, -r*0.7, r*0.5, -r*0.7, r*0.9, 0);
+          ctx.bezierCurveTo(r*0.5, r*0.7, -r*0.5, r*0.7, -r*0.9, 0);
+          ctx.closePath();
+          ctx.stroke();
+          break;
+        case 'solar':
+          ctx.beginPath();
+          ctx.moveTo(0, r*0.85);
+          ctx.lineTo(-r*0.75, -r*0.55);
+          ctx.lineTo(r*0.75, -r*0.55);
+          ctx.closePath();
+          ctx.stroke();
+          break;
+        case 'heart':
+          ctx.beginPath();
+          ctx.moveTo(0, -r*0.8);
+          ctx.lineTo(-r*0.7, r*0.5);
+          ctx.lineTo(r*0.7, r*0.5);
+          ctx.closePath();
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.moveTo(0, r*0.8);
+          ctx.lineTo(-r*0.7, -r*0.5);
+          ctx.lineTo(r*0.7, -r*0.5);
+          ctx.closePath();
+          ctx.stroke();
+          break;
+        case 'throat':
+          ctx.beginPath();
+          ctx.arc(0, 0, r*0.75, 0, Math.PI*2);
+          ctx.stroke();
+          break;
+        case 'third':
+          ctx.beginPath();
+          ctx.moveTo(0, r*0.7);
+          ctx.lineTo(-r*0.65, -r*0.45);
+          ctx.lineTo(r*0.65, -r*0.45);
+          ctx.closePath();
+          ctx.stroke();
+          ctx.fillStyle = 'rgba(0,0,0,0.7)';
+          ctx.beginPath();
+          ctx.arc(0, r*0.05, r*0.1, 0, Math.PI*2);
+          ctx.fill();
+          break;
+        case 'crown':
+          ctx.beginPath();
+          ctx.arc(0, 0, r*0.7, 0, Math.PI*2);
+          ctx.stroke();
+          ctx.fillStyle = 'rgba(0,0,0,0.7)';
+          ctx.beginPath();
+          ctx.arc(0, 0, r*0.125, 0, Math.PI*2);
+          ctx.fill();
+          break;
+      }
+      ctx.restore();
+    } else {
+      // Black/erase - draw X
+      ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+      ctx.lineWidth = 2;
+      let m = s * 0.25;
+      ctx.beginPath();
+      ctx.moveTo(m, m);
+      ctx.lineTo(s-m, s-m);
+      ctx.moveTo(s-m, m);
+      ctx.lineTo(m, s-m);
+      ctx.stroke();
+    }
+  }
+}
+
+// === SOUND SYSTEM (Sargam / Indian Classical) ===
+
+async function initSound() {
+  try {
+    // Force large buffer size for performance over latency
+    Tone.context.dispose();
+    const ctx = new AudioContext({ latencyHint: 'playback', sampleRate: 44100 });
+    Tone.setContext(ctx);
+    await Tone.start();
+    
+    // Audio scheduled AV_DELAY into the future — matches the visual delay
+    Tone.context.lookAhead = AV_DELAY;
+    Tone.context.updateInterval = AV_DELAY / 3;
+    
+    // === SHARED EFFECTS (send bus) ===
+    let sendReverb = new Tone.Reverb({
+      decay: 5,
+      wet: 1.0,
+      preDelay: 0.04
+    }).toDestination();
+    await sendReverb.generate();
+    
+    let sendDelay = new Tone.FeedbackDelay({
+      delayTime: '8n.',
+      feedback: 0.12,
+      wet: 1.0
+    }).connect(sendReverb);
+    
+    // Send gains — control how much original signal hits effects
+    let origReverbSend = new Tone.Gain(0.25).connect(sendReverb);
+    let origDelaySend = new Tone.Gain(0).connect(sendDelay);
+    
+    // === ORIGINAL DRY CHAIN ===
+    let masterFilter = new Tone.Filter({
+      frequency: 3000,
+      type: 'lowpass',
+      rolloff: -12
+    }).toDestination();
+    
+    octaveSynths = [];
+    
+    // All 8 original MonoSynths — dry to filter + send to effects
+    let pan0 = new Tone.Panner(0).connect(masterFilter).connect(origReverbSend).connect(origDelaySend);
+    octaveSynths[0] = new Tone.MonoSynth({
+      oscillator: { type: 'sine' },
+      envelope: { attack: 0.001, decay: 1.5, sustain: 0.2, release: 2.0 },
+      filterEnvelope: { attack: 0.001, decay: 0.5, sustain: 0.3, release: 1.0, baseFrequency: 200, octaves: 2 }
+    }).connect(pan0);
+    octaveSynths[0].volume.value = -6;
+    
+    let pan1 = new Tone.Panner(0).connect(masterFilter).connect(origReverbSend).connect(origDelaySend);
+    octaveSynths[1] = new Tone.MonoSynth({
+      oscillator: { type: 'sine' },
+      envelope: { attack: 0.001, decay: 1.2, sustain: 0.15, release: 1.5 },
+      filterEnvelope: { attack: 0.001, decay: 0.4, sustain: 0.3, release: 0.8, baseFrequency: 250, octaves: 2 }
+    }).connect(pan1);
+    octaveSynths[1].volume.value = -6;
+    
+    let pan2 = new Tone.Panner(0).connect(masterFilter).connect(origReverbSend).connect(origDelaySend);
+    octaveSynths[2] = new Tone.MonoSynth({
+      oscillator: { type: 'triangle' },
+      envelope: { attack: 0.001, decay: 0.9, sustain: 0.1, release: 1.2 },
+      filterEnvelope: { attack: 0.001, decay: 0.3, sustain: 0.3, release: 0.6, baseFrequency: 300, octaves: 2 }
+    }).connect(pan2);
+    octaveSynths[2].volume.value = -8;
+    
+    let pan3 = new Tone.Panner(0).connect(masterFilter).connect(origReverbSend).connect(origDelaySend);
+    octaveSynths[3] = new Tone.MonoSynth({
+      oscillator: { type: 'triangle' },
+      envelope: { attack: 0.001, decay: 0.7, sustain: 0.08, release: 1.0 },
+      filterEnvelope: { attack: 0.001, decay: 0.2, sustain: 0.3, release: 0.5, baseFrequency: 400, octaves: 2 }
+    }).connect(pan3);
+    octaveSynths[3].volume.value = -8;
+    
+    let pan4 = new Tone.Panner(0).connect(masterFilter).connect(origReverbSend).connect(origDelaySend);
+    octaveSynths[4] = new Tone.MonoSynth({
+      oscillator: { type: 'triangle' },
+      envelope: { attack: 0.001, decay: 0.5, sustain: 0.06, release: 0.8 },
+      filterEnvelope: { attack: 0.001, decay: 0.15, sustain: 0.3, release: 0.4, baseFrequency: 500, octaves: 2 }
+    }).connect(pan4);
+    octaveSynths[4].volume.value = -10;
+    
+    let pan5 = new Tone.Panner(0).connect(masterFilter).connect(origReverbSend).connect(origDelaySend);
+    octaveSynths[5] = new Tone.MonoSynth({
+      oscillator: { type: 'triangle' },
+      envelope: { attack: 0.001, decay: 0.4, sustain: 0.05, release: 0.6 },
+      filterEnvelope: { attack: 0.001, decay: 0.1, sustain: 0.3, release: 0.3, baseFrequency: 600, octaves: 2 }
+    }).connect(pan5);
+    octaveSynths[5].volume.value = -10;
+    
+    let pan6 = new Tone.Panner(0).connect(masterFilter).connect(origReverbSend).connect(origDelaySend);
+    octaveSynths[6] = new Tone.MonoSynth({
+      oscillator: { type: 'sine' },
+      envelope: { attack: 0.001, decay: 0.3, sustain: 0.03, release: 0.4 },
+      filterEnvelope: { attack: 0.001, decay: 0.08, sustain: 0.3, release: 0.2, baseFrequency: 800, octaves: 2 }
+    }).connect(pan6);
+    octaveSynths[6].volume.value = -12;
+    
+    let pan7 = new Tone.Panner(0).connect(masterFilter).connect(origReverbSend).connect(origDelaySend);
+    octaveSynths[7] = new Tone.MonoSynth({
+      oscillator: { type: 'sine' },
+      envelope: { attack: 0.001, decay: 0.2, sustain: 0.02, release: 0.3 },
+      filterEnvelope: { attack: 0.001, decay: 0.05, sustain: 0.3, release: 0.15, baseFrequency: 1000, octaves: 2 }
+    }).connect(pan7);
+    octaveSynths[7].volume.value = -14;
+    
+    // === FM SINGING BOWL LAYER (columns 4-7) ===
+    window._bowlSynths = [];
+    
+    let bowlDelay = new Tone.FeedbackDelay({
+      delayTime: '8n.',
+      feedback: 0.12,
+      wet: 0.33
+    }).connect(sendReverb);
+    
+    let bowlReverbSend = new Tone.Gain(0.66).connect(sendReverb);
+    
+    let bowlPans = [0.1, 0.3, 0.5, 0.7];
+    
+    let bowlConfigs = [
+      { harmonicity: 3.51, modIndex: 0.6,
+        env: { attack: 0.005, decay: 1.125, sustain: 0.0225, release: 1.5 },
+        modEnv: { attack: 0.005, decay: 0.6, sustain: 0.0225, release: 0.9, baseFrequency: 350, octaves: 2 },
+        vol: -18 },
+      { harmonicity: 4.01, modIndex: 0.5,
+        env: { attack: 0.003, decay: 0.9, sustain: 0.015, release: 1.125 },
+        modEnv: { attack: 0.003, decay: 0.45, sustain: 0.015, release: 0.75, baseFrequency: 500, octaves: 1.5 },
+        vol: -20 },
+      { harmonicity: 5.01, modIndex: 0.4,
+        env: { attack: 0.002, decay: 0.675, sustain: 0.0075, release: 0.75 },
+        modEnv: { attack: 0.002, decay: 0.3, sustain: 0.015, release: 0.45, baseFrequency: 700, octaves: 1.5 },
+        vol: -22 },
+      { harmonicity: 5.51, modIndex: 0.3,
+        env: { attack: 0.001, decay: 0.525, sustain: 0.0075, release: 0.6 },
+        modEnv: { attack: 0.001, decay: 0.225, sustain: 0.0075, release: 0.3, baseFrequency: 1000, octaves: 1 },
+        vol: -24 }
+    ];
+    
+    for (let i = 0; i < 4; i++) {
+      let cfg = bowlConfigs[i];
+      let panner = new Tone.Panner(bowlPans[i]).connect(bowlDelay);
+      panner.connect(bowlReverbSend);
+      let synth = new Tone.FMSynth({
+        harmonicity: cfg.harmonicity,
+        modulationIndex: cfg.modIndex,
+        oscillator: { type: 'sine' },
+        modulation: { type: 'sine' },
+        envelope: cfg.env,
+        modulationEnvelope: cfg.modEnv
+      }).connect(panner);
+      synth.volume.value = cfg.vol;
+      window._bowlSynths[i] = synth;
+    }
+    
+    // Initialize note tracking
+    for (let chakra of CHAKRA_ORDER) {
+      lastNotes[chakra] = 0;
+      noteDecay[chakra] = 0;
+    }
+    
+    audioStarted = true;
+  } catch (e) {
+    // Silent fail
+  }
+}
+
+function updateSound() {
+  if (!audioStarted) return;
+  
+  try {
+    let now = Tone.now();
+    
+    // Check bottom row (y = 7) for triggers — read targetGrid for consistent results
+    let bottomRow = 7;
+    
+    for (let x = 0; x < GRID_SIZE; x++) {
+      let col = targetGrid[bottomRow][x];
+      
+      // Get chakra for this cell
+      let chakra = getDominantChakra(col);
+      let key = 'col_' + x;
+      
+      // Initialize tracking
+      if (!lastNotes[key]) lastNotes[key] = null;
+      
+      // Trigger only when chakra CHANGES (arrives or changes color)
+      // with a per-column cooldown to prevent popcorn rapid-fire
+      if (chakra && chakra !== 'white') {
+        let cooldownMs = stepInterval * 1000 * 0.8; // 80% of step interval
+        let canTrigger = (now - lastTriggerTime[x]) > (cooldownMs / 1000);
+        
+        if (lastNotes[key] !== chakra && canTrigger) {
+          // New chakra arrived - trigger note
+          let baseFreq = SWAR_FREQUENCIES[chakra];
+          
+          // Column determines octave: 0=low, 7=high
+          let octaveShift = x - 3;
+          let freq = baseFreq * Math.pow(2, octaveShift);
+          
+          // Duration based on octave - lower = longer sustain
+          let durations = ['2n', '2n', '4n', '4n', '8n', '8n', '16n', '16n'];
+          let duration = durations[x];
+          
+          let velocity = 0.7;
+          
+          // Use the synth for this column/octave
+          octaveSynths[x].triggerAttackRelease(freq, duration, now, velocity);
+          
+          // Also trigger bowl layer on columns 4-7
+          if (x >= 4 && window._bowlSynths && window._bowlSynths[x - 4]) {
+            let bowlDurations = ['2n', '4n', '4n', '8n'];
+            window._bowlSynths[x - 4].triggerAttackRelease(freq, bowlDurations[x - 4], now, 0.5);
+          }
+          
+          // Queue visual surge to fire AV_DELAY from now (matches audio lookAhead)
+          let fireAt = performance.now() + AV_DELAY * 1000;
+          visualEventQueue.push({
+            fireAt: fireAt,
+            data: { x: x, row: 7 }
+          });
+          
+          lastNotes[key] = chakra;
+          lastTriggerTime[x] = now;
+        }
+      } else {
+        // No chakra or white - reset tracking so next arrival triggers
+        lastNotes[key] = null;
+      }
+    }
+  } catch (e) {
+    // Silent fail
+  }
+}
+
+function toggleSound() {
+  soundEnabled = !soundEnabled;
+  document.getElementById('sound-btn').classList.toggle('active', soundEnabled);
+  
+  if (soundEnabled && !audioStarted) {
+    initSound();
+  }
+}
+
+// Read a choreography row exactly like the sequencer reads its grid
+function triggerChoreographyRow(row) {
+  let now = Tone.now();
+  
+  for (let x = 0; x < GRID_SIZE; x++) {
+    // Read the target grid color (what the choreography computed)
+    let col = targetGrid[row][x];
+    let chakra = getDominantChakra(col);
+    
+    if (chakra && chakra !== 'white') {
+      let baseFreq = SWAR_FREQUENCIES[chakra];
+      
+      let octaveShift = x - 3;
+      let freq = baseFreq * Math.pow(2, octaveShift);
+      
+      let durations = ['2n', '2n', '4n', '4n', '8n', '8n', '16n', '16n'];
+      let duration = durations[x];
+      
+      octaveSynths[x].triggerAttackRelease(freq, duration, now, 0.7);
+      
+      // Also trigger bowl layer on columns 4-7
+      if (x >= 4 && window._bowlSynths && window._bowlSynths[x - 4]) {
+        let bowlDurations = ['2n', '4n', '4n', '8n'];
+        window._bowlSynths[x - 4].triggerAttackRelease(freq, bowlDurations[x - 4], now, 0.5);
+      }
+      
+      let fireAt = performance.now() + AV_DELAY * 1000;
+      visualEventQueue.push({
+        fireAt: fireAt,
+        data: { x: x, row: row }
+      });
+    }
+  }
+}
+
+function triggerSequencerRow(row) {
+  let now = Tone.now();
+  
+  for (let x = 0; x < GRID_SIZE; x++) {
+    let colorIndex = sequencerGrid[row][x];
+    
+    if (colorIndex > 0) {
+      let chakra = COLOR_CYCLE[colorIndex];
+      let baseFreq = SWAR_FREQUENCIES[chakra];
+      
+      let octaveShift = x - 3;
+      let freq = baseFreq * Math.pow(2, octaveShift);
+      
+      let durations = ['2n', '2n', '4n', '4n', '8n', '8n', '16n', '16n'];
+      let duration = durations[x];
+      
+      octaveSynths[x].triggerAttackRelease(freq, duration, now, 0.7);
+      
+      // Also trigger bowl layer on columns 4-7
+      if (x >= 4 && window._bowlSynths && window._bowlSynths[x - 4]) {
+        let bowlDurations = ['2n', '4n', '4n', '8n'];
+        window._bowlSynths[x - 4].triggerAttackRelease(freq, bowlDurations[x - 4], now, 0.5);
+      }
+      
+      let fireAt = performance.now() + AV_DELAY * 1000;
+      visualEventQueue.push({
+        fireAt: fireAt,
+        data: { x: x, row: row }
+      });
+    }
+  }
+}
+
+function setChoreography(name) {
+  if (name === 'sequencer') {
+    sequencerMode = !sequencerMode;
+    if (sequencerMode) {
+      choreography = null;
+      document.getElementById('palette-section').style.display = '';
+      document.getElementById('seq-btn').classList.add('active');
+      renderPaletteSwatches();
+      updateButtonGlows();
+    } else {
+      document.getElementById('palette-section').style.display = 'none';
+      document.getElementById('seq-btn').classList.remove('active');
+      updateButtonGlows();
+    }
+  } else {
+    sequencerMode = false;
+    document.getElementById('palette-section').style.display = 'none';
+    document.getElementById('seq-btn').classList.remove('active');
+    if (choreography === name) {
+      choreography = null;
+    } else {
+      choreography = name;
+    }
+  }
+  
+  // Update choreography button states
+  document.querySelectorAll('#choreography-buttons button').forEach(btn => {
+    btn.classList.toggle('active', btn.textContent === choreography);
+  });
+  updateButtonGlows();
+}
+
+function updateButtonGlows() {
+  document.querySelectorAll('button[data-glow]').forEach(btn => {
+    let glow = btn.getAttribute('data-glow');
+    if (btn.classList.contains('active')) {
+      btn.style.borderColor = `rgba(${glow},0.35)`;
+      btn.style.boxShadow = `0 0 12px rgba(${glow},0.15), inset 0 0 8px rgba(${glow},0.05)`;
+      btn.style.color = `rgba(${glow},0.9)`;
+      btn.style.textShadow = `0 0 8px rgba(${glow},0.5)`;
+    } else {
+      btn.style.borderColor = '';
+      btn.style.boxShadow = '';
+      btn.style.color = '';
+      btn.style.textShadow = '';
+    }
+  });
+}
+
+function toggleWalkers() {
+  walkersEnabled = !walkersEnabled;
+  document.getElementById('walkers-btn').classList.toggle('active', walkersEnabled);
+  updateButtonGlows();
+}
+
+function toggleInverse() {
+  inverseEnabled = !inverseEnabled;
+  document.getElementById('inverse-btn').classList.toggle('active', inverseEnabled);
+  updateButtonGlows();
+}
+
+function applyWalkersLayer() {
+  let center = 3.5;
+  let cycleDuration = 6.0;
+  let phase = (time % cycleDuration) / cycleDuration;
+  
+  // Ping-pong: 0->1->0 over the cycle
+  let pingPong = phase < 0.5 ? phase * 2 : (1 - phase) * 2;
+  
+  // Ease in-out
+  let progress = pingPong < 0.5 
+    ? 2 * pingPong * pingPong 
+    : 1 - pow(-2 * pingPong + 2, 2) / 2;
+  
+  // Converge: corners moving inward
+  let corners = [
+    { startX: 0, startY: 0, dirX: 1, dirY: 1 },
+    { startX: 7, startY: 0, dirX: -1, dirY: 1 },
+    { startX: 0, startY: 7, dirX: 1, dirY: -1 },
+    { startX: 7, startY: 7, dirX: -1, dirY: -1 }
+  ];
+  
+  for (let corner of corners) {
+    let posX = corner.startX + corner.dirX * progress * center;
+    let posY = corner.startY + corner.dirY * progress * center;
+    
+    for (let y = 0; y < GRID_SIZE; y++) {
+      for (let x = 0; x < GRID_SIZE; x++) {
+        let dist = sqrt(pow(x - posX, 2) + pow(y - posY, 2));
+        
+        if (dist < 1.5) {
+          let intensity = 1 - (dist / 1.5);
+          intensity = pow(intensity, 0.6);
+          targetGrid[y][x] = lerpColor3(targetGrid[y][x], COLORS.white, intensity * 0.5);
+        }
+      }
+    }
+  }
+  
+  // Cross: center moving outward
+  let edges = [
+    { dirX: 0, dirY: -1 },
+    { dirX: 0, dirY: 1 },
+    { dirX: -1, dirY: 0 },
+    { dirX: 1, dirY: 0 }
+  ];
+  
+  for (let edge of edges) {
+    let posX = center + edge.dirX * progress * center;
+    let posY = center + edge.dirY * progress * center;
+    
+    for (let y = 0; y < GRID_SIZE; y++) {
+      for (let x = 0; x < GRID_SIZE; x++) {
+        let dist = sqrt(pow(x - posX, 2) + pow(y - posY, 2));
+        
+        if (dist < 1.5) {
+          let intensity = 1 - (dist / 1.5);
+          intensity = pow(intensity, 0.6);
+          targetGrid[y][x] = lerpColor3(targetGrid[y][x], COLORS.white, intensity * 0.5);
+        }
+      }
+    }
+  }
+  
+  // Flash at center when converge arrives
+  if (progress > 0.85) {
+    let flashIntensity = (progress - 0.85) / 0.15;
+    flashIntensity = pow(flashIntensity, 0.5);
+    for (let y = 3; y <= 4; y++) {
+      for (let x = 3; x <= 4; x++) {
+        targetGrid[y][x] = lerpColor3(targetGrid[y][x], COLORS.white, flashIntensity * 0.5);
+      }
+    }
+  }
+  
+  // Flash at center when cross departs
+  if (progress < 0.15) {
+    let flashIntensity = 1 - (progress / 0.15);
+    flashIntensity = pow(flashIntensity, 0.5);
+    for (let y = 3; y <= 4; y++) {
+      for (let x = 3; x <= 4; x++) {
+        targetGrid[y][x] = lerpColor3(targetGrid[y][x], COLORS.white, flashIntensity * 0.5);
+      }
+    }
+  }
+}
+
+function getConvergeCrossMask() {
+  // Returns a 2D array of intensities where walkers would light up
+  let mask = [];
+  for (let y = 0; y < GRID_SIZE; y++) {
+    mask[y] = [];
+    for (let x = 0; x < GRID_SIZE; x++) {
+      mask[y][x] = 0;
+    }
+  }
+  
+  let center = 3.5;
+  let cycleDuration = 6.0;
+  let phase = (time % cycleDuration) / cycleDuration;
+  
+  // Ping-pong: 0->1->0 over the cycle
+  let pingPong = phase < 0.5 ? phase * 2 : (1 - phase) * 2;
+  
+  let progress = pingPong < 0.5 
+    ? 2 * pingPong * pingPong 
+    : 1 - pow(-2 * pingPong + 2, 2) / 2;
+  
+  // Converge positions
+  let corners = [
+    { startX: 0, startY: 0, dirX: 1, dirY: 1 },
+    { startX: 7, startY: 0, dirX: -1, dirY: 1 },
+    { startX: 0, startY: 7, dirX: 1, dirY: -1 },
+    { startX: 7, startY: 7, dirX: -1, dirY: -1 }
+  ];
+  
+  for (let corner of corners) {
+    let posX = corner.startX + corner.dirX * progress * center;
+    let posY = corner.startY + corner.dirY * progress * center;
+    
+    for (let y = 0; y < GRID_SIZE; y++) {
+      for (let x = 0; x < GRID_SIZE; x++) {
+        let dist = sqrt(pow(x - posX, 2) + pow(y - posY, 2));
+        if (dist < 1.5) {
+          let intensity = 1 - (dist / 1.5);
+          intensity = pow(intensity, 0.6);
+          mask[y][x] = max(mask[y][x], intensity);
+        }
+      }
+    }
+  }
+  
+  // Cross positions
+  let edges = [
+    { dirX: 0, dirY: -1 },
+    { dirX: 0, dirY: 1 },
+    { dirX: -1, dirY: 0 },
+    { dirX: 1, dirY: 0 }
+  ];
+  
+  for (let edge of edges) {
+    let posX = center + edge.dirX * progress * center;
+    let posY = center + edge.dirY * progress * center;
+    
+    for (let y = 0; y < GRID_SIZE; y++) {
+      for (let x = 0; x < GRID_SIZE; x++) {
+        let dist = sqrt(pow(x - posX, 2) + pow(y - posY, 2));
+        if (dist < 1.5) {
+          let intensity = 1 - (dist / 1.5);
+          intensity = pow(intensity, 0.6);
+          mask[y][x] = max(mask[y][x], intensity);
+        }
+      }
+    }
+  }
+  
+  return mask;
+}
+
+function applyInverseLayer() {
+  let mask = getConvergeCrossMask();
+  
+  for (let y = 0; y < GRID_SIZE; y++) {
+    for (let x = 0; x < GRID_SIZE; x++) {
+      let inverseIntensity = 1 - mask[y][x];
+      if (inverseIntensity > 0.1) {
+        targetGrid[y][x] = lerpColor3(targetGrid[y][x], COLORS.white, inverseIntensity * 0.5);
+      }
+    }
+  }
+}
+
+// Set initial active buttons
+window.onload = () => {
+  document.querySelectorAll('button').forEach(btn => {
+    if (btn.textContent === 'rain') {
+      btn.classList.add('active');
+    }
+  });
+  document.getElementById('walkers-btn').classList.add('active');
+  document.getElementById('inverse-btn').classList.add('active');
+};
+  </script>
+</body>
+</html>

@@ -1,0 +1,1586 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Physarum Chladni Simulation (A/B Mode)</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #000;
+      position: fixed;
+      top: 0;
+      left: 0;
+    }
+    canvas {
+      display: block;
+      position: absolute;
+      top: 0;
+      left: 0;
+    }
+    .controls {
+      position: absolute;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 8px;
+      z-index: 100;
+      width: 95%;
+      max-width: 600px;
+      padding: 0 10px;
+    }
+    .btn {
+      padding: 10px 16px;
+      font-size: 12px;
+      cursor: pointer;
+      background: rgba(255,255,255,0.1);
+      color: #fff;
+      border: 1px solid rgba(255,255,255,0.3);
+      border-radius: 20px;
+      transition: all 0.3s;
+      white-space: nowrap;
+    }
+    .btn:hover {
+      background: rgba(255,255,255,0.2);
+    }
+    .btn.active {
+      background: rgba(255,255,255,0.3);
+      border-color: rgba(255,255,255,0.6);
+    }
+    .slider-container {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(255,255,255,0.1);
+      padding: 8px 12px;
+      border-radius: 20px;
+      border: 1px solid rgba(255,255,255,0.3);
+      flex: 1 1 auto;
+      min-width: 200px;
+      max-width: 300px;
+    }
+    .slider-container label {
+      color: #fff;
+      font-size: 10px;
+      white-space: nowrap;
+    }
+    #physarumSlider {
+      flex: 1;
+      min-width: 60px;
+      cursor: pointer;
+      accent-color: #88ccff;
+    }
+    
+    /* Mobile portrait adjustments */
+    @media (max-width: 480px) {
+      .controls {
+        bottom: 10px;
+        gap: 6px;
+      }
+      .btn {
+        padding: 8px 12px;
+        font-size: 11px;
+      }
+      .slider-container {
+        min-width: 150px;
+        padding: 6px 10px;
+        order: -1; /* Slider first on mobile */
+        flex-basis: 100%;
+      }
+      .slider-container label {
+        font-size: 9px;
+      }
+    }
+    
+    /* Master Bus Panel */
+    #masterPanel {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      background: rgba(0,0,0,0.85);
+      border: 1px solid rgba(255,255,255,0.2);
+      border-radius: 8px;
+      color: #fff;
+      font-family: monospace;
+      font-size: 11px;
+      z-index: 200;
+      width: 220px;
+      max-height: 90vh;
+      overflow-y: auto;
+    }
+    #masterPanel.collapsed {
+      width: auto;
+    }
+    #masterPanel.collapsed .panel-content {
+      display: none;
+    }
+    .panel-header {
+      padding: 8px 12px;
+      cursor: pointer;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid rgba(255,255,255,0.1);
+    }
+    .panel-header:hover {
+      background: rgba(255,255,255,0.1);
+    }
+    .panel-content {
+      padding: 10px;
+    }
+    .param-group {
+      margin-bottom: 12px;
+    }
+    .param-group-title {
+      color: #888;
+      font-size: 9px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-bottom: 6px;
+    }
+    .param-row {
+      display: flex;
+      align-items: center;
+      margin-bottom: 4px;
+    }
+    .param-row label {
+      width: 70px;
+      font-size: 10px;
+      color: #aaa;
+    }
+    .param-row input[type="range"] {
+      flex: 1;
+      height: 4px;
+      cursor: pointer;
+      accent-color: #88ccff;
+    }
+    .param-row .value {
+      width: 35px;
+      text-align: right;
+      font-size: 10px;
+      color: #fff;
+    }
+    .param-row select {
+      flex: 1;
+      background: rgba(255,255,255,0.1);
+      color: #fff;
+      border: 1px solid rgba(255,255,255,0.3);
+      border-radius: 4px;
+      padding: 2px 4px;
+      font-size: 10px;
+      cursor: pointer;
+    }
+    .param-row select option {
+      background: #1a1a1a;
+      color: #fff;
+    }
+  </style>
+</head>
+<body>
+  <div class="controls">
+    <div class="slider-container">
+      <label for="physarumSlider">Chladni</label>
+      <input type="range" id="physarumSlider" min="0" max="100" value="12.5">
+      <label for="physarumSlider">Physarum</label>
+    </div>
+    <button id="startAudio" class="btn">▶ Sound</button>
+  </div>
+  
+  <!-- Master Bus Panel -->
+  <div id="masterPanel" class="collapsed">
+    <div class="panel-header" onclick="togglePanel()">
+      <span>⚙ Master Bus</span>
+      <span id="panelArrow">◀</span>
+    </div>
+    <div class="panel-content">
+      
+      <div class="param-group">
+        <div class="param-group-title">Reverb</div>
+        <div class="param-row">
+          <label>Dry/Wet</label>
+          <input type="range" id="reverbMix" min="0" max="100" value="33">
+          <span class="value" id="reverbMixVal">33%</span>
+        </div>
+        <div class="param-row">
+          <label>Duration</label>
+          <input type="range" id="reverbDur" min="1" max="12" value="8" step="0.5">
+          <span class="value" id="reverbDurVal">8s</span>
+        </div>
+        <div class="param-row">
+          <label>Decay</label>
+          <input type="range" id="reverbDecay" min="0.5" max="4" value="3" step="0.1">
+          <span class="value" id="reverbDecayVal">3</span>
+        </div>
+      </div>
+      
+      <div class="param-group">
+        <div class="param-group-title">EQ (dB)</div>
+        <div class="param-row">
+          <label>Low 100Hz</label>
+          <input type="range" id="eqLow" min="-12" max="12" value="1">
+          <span class="value" id="eqLowVal">1</span>
+        </div>
+        <div class="param-row">
+          <label>Mid 500Hz</label>
+          <input type="range" id="eqMid1" min="-12" max="12" value="0">
+          <span class="value" id="eqMid1Val">0</span>
+        </div>
+        <div class="param-row">
+          <label>Mid 2kHz</label>
+          <input type="range" id="eqMid2" min="-12" max="12" value="3">
+          <span class="value" id="eqMid2Val">3</span>
+        </div>
+        <div class="param-row">
+          <label>High 8kHz</label>
+          <input type="range" id="eqHigh" min="-12" max="12" value="5">
+          <span class="value" id="eqHighVal">5</span>
+        </div>
+      </div>
+      
+      <div class="param-group">
+        <div class="param-group-title">Compressor</div>
+        <div class="param-row">
+          <label>Threshold</label>
+          <input type="range" id="compThresh" min="-40" max="0" value="-24">
+          <span class="value" id="compThreshVal">-24</span>
+        </div>
+        <div class="param-row">
+          <label>Ratio</label>
+          <input type="range" id="compRatio" min="1" max="20" value="4">
+          <span class="value" id="compRatioVal">4:1</span>
+        </div>
+      </div>
+      
+      <div class="param-group">
+        <div class="param-group-title">Master</div>
+        <div class="param-row">
+          <label>Saturate</label>
+          <input type="range" id="satAmount" min="0" max="50" value="7">
+          <span class="value" id="satAmountVal">7</span>
+        </div>
+        <div class="param-row">
+          <label>Width</label>
+          <input type="range" id="stereoWidth" min="0" max="200" value="200">
+          <span class="value" id="stereoWidthVal">200%</span>
+        </div>
+        <div class="param-row">
+          <label>Bass Mono</label>
+          <input type="range" id="crossoverFreq" min="50" max="400" value="66">
+          <span class="value" id="crossoverFreqVal">66Hz</span>
+        </div>
+        <div class="param-row">
+          <label>Limiter</label>
+          <input type="range" id="limThresh" min="-6" max="0" value="-0.1" step="0.1">
+          <span class="value" id="limThreshVal">-0.1</span>
+        </div>
+      </div>
+      
+      <div class="param-group">
+        <div class="param-group-title">Particles</div>
+        <div class="param-row">
+          <label>Force</label>
+          <input type="range" id="chladniForce" min="0.2" max="4" value="2" step="0.1">
+          <span class="value" id="chladniForceVal">2</span>
+        </div>
+        <div class="param-row">
+          <label>Damping</label>
+          <input type="range" id="particleDamping" min="0.85" max="0.99" value="0.96" step="0.01">
+          <span class="value" id="particleDampingVal">0.96</span>
+        </div>
+        <div class="param-row">
+          <label>Max Speed</label>
+          <input type="range" id="maxSpeed" min="1" max="8" value="3" step="0.5">
+          <span class="value" id="maxSpeedVal">3</span>
+        </div>
+        <div class="param-row">
+          <label>Blend</label>
+          <select id="blendMode">
+            <option value="ADD">Add</option>
+            <option value="SCREEN" selected>Screen</option>
+            <option value="LIGHTEST">Lightest</option>
+            <option value="BLEND">Normal</option>
+            <option value="OVERLAY">Overlay</option>
+            <option value="SOFT_LIGHT">Soft Light</option>
+            <option value="HARD_LIGHT">Hard Light</option>
+            <option value="DODGE">Dodge</option>
+            <option value="BURN">Burn</option>
+            <option value="DIFFERENCE">Difference</option>
+            <option value="EXCLUSION">Exclusion</option>
+            <option value="MULTIPLY">Multiply</option>
+            <option value="DARKEST">Darkest</option>
+          </select>
+        </div>
+      </div>
+      
+    </div>
+  </div>
+  
+  <script>
+let physarums = [];
+let bgNoiseOffset = 0;
+let zoom = 1;
+let flowField;
+let resolution = 40;
+const MOBILE_BREAKPOINT = 768;
+// Better mobile detection: check user agent for actual mobile devices, not just touch capability
+const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) 
+                 || (window.innerWidth < MOBILE_BREAKPOINT && 'ontouchstart' in window);
+const PARTICLE_COUNT = isMobile ? 600 : 900;
+const PARTICLE_SIZE = 16;
+const MIN_ZOOM = 1.0;
+const MAX_ZOOM = 8.0;
+
+// Target aspect ratio (phone portrait) - creates letterboxing on wide screens
+const TARGET_ASPECT = 9 / 19.5;  // ~0.46 (for portrait mode)
+// Wider aspect for PC landscape - bracelet-like horizontal spread
+const LANDSCAPE_ASPECT = 16 / 6;  // ~2.67 — wide and short, like a bracelet band
+
+// Orientation handling - always render as portrait
+let isLandscape = false;
+let renderWidth, renderHeight;  // The "virtual" portrait dimensions we render to
+let offsetX = 0, offsetY = 0;   // Offset for centering
+
+// A/B MODE SLIDER (0 = pure Chladni, 100 = full Physarum)
+let physarumAmount = 12.5;
+let isInteractingWithUI = false;
+
+// ConvolutionReverb - Algorithmic Impulse Response Reverb
+class ConvolutionReverb {
+  constructor(ctx, options = {}) {
+    this.ctx = ctx;
+    this.input = ctx.createGain();
+    this.output = ctx.createGain();
+    this.output.gain.value = options.outputGain || 0.5;
+    
+    this.duration = options.duration || 4.0;
+    this.decay = options.decay || 2.5;
+    this.density = options.density || 0.8;
+    this.damping = options.damping || 0.6;
+    this.preDelay = options.preDelay || 0.02;
+    this.stereoWidth = options.stereoWidth || 0.8;
+    
+    this.convolver = ctx.createConvolver();
+    
+    this.preDelayNode = ctx.createDelay(0.5);
+    this.preDelayNode.delayTime.value = this.preDelay;
+    
+    this.inputFilter = ctx.createBiquadFilter();
+    this.inputFilter.type = 'highpass';
+    this.inputFilter.frequency.value = options.inputHighpass || 180;
+    this.inputFilter.Q.value = 0.5;
+    
+    this.outputFilter = ctx.createBiquadFilter();
+    this.outputFilter.type = 'lowpass';
+    this.outputFilter.frequency.value = options.outputLowpass || 6000;
+    this.outputFilter.Q.value = 0.5;
+    
+    this.input.connect(this.inputFilter);
+    this.inputFilter.connect(this.preDelayNode);
+    this.preDelayNode.connect(this.convolver);
+    this.convolver.connect(this.outputFilter);
+    this.outputFilter.connect(this.output);
+    
+    this.generateIR();
+  }
+  
+  generateIR() {
+    const sampleRate = this.ctx.sampleRate;
+    const length = Math.floor(sampleRate * this.duration);
+    
+    const buffer = this.ctx.createBuffer(2, length, sampleRate);
+    const leftChannel = buffer.getChannelData(0);
+    const rightChannel = buffer.getChannelData(1);
+    
+    for (let i = 0; i < length; i++) {
+      const t = i / sampleRate;
+      const progress = i / length;
+      
+      const envelope = Math.exp(-t * this.decay);
+      const dampingFactor = 1 - (this.damping * progress);
+      const densityThreshold = this.density * (0.3 + 0.7 * progress);
+      
+      let noiseL = 0;
+      let noiseR = 0;
+      
+      if (Math.random() < densityThreshold) {
+        noiseL = (Math.random() * 2 - 1);
+        noiseR = (Math.random() * 2 - 1);
+        
+        if (i > 0) {
+          const lpAmount = 1 - dampingFactor;
+          noiseL = noiseL * dampingFactor + leftChannel[i - 1] * lpAmount * 0.5;
+          noiseR = noiseR * dampingFactor + rightChannel[i - 1] * lpAmount * 0.5;
+        }
+        
+        const mid = (noiseL + noiseR) * 0.5;
+        const side = (noiseL - noiseR) * 0.5;
+        noiseL = mid + side * this.stereoWidth;
+        noiseR = mid - side * this.stereoWidth;
+      }
+      
+      leftChannel[i] = noiseL * envelope;
+      rightChannel[i] = noiseR * envelope;
+    }
+    
+    // Early reflections
+    const earlyReflections = [
+      { time: 0.012, gain: 0.7 },
+      { time: 0.019, gain: 0.5 },
+      { time: 0.028, gain: 0.4 },
+      { time: 0.037, gain: 0.35 },
+      { time: 0.048, gain: 0.3 },
+      { time: 0.063, gain: 0.25 },
+      { time: 0.079, gain: 0.2 },
+    ];
+    
+    earlyReflections.forEach(ref => {
+      const sampleIndex = Math.floor(ref.time * sampleRate);
+      if (sampleIndex < length) {
+        const burstLength = Math.floor(0.003 * sampleRate);
+        for (let j = 0; j < burstLength && sampleIndex + j < length; j++) {
+          const burstEnv = Math.exp(-j / (burstLength * 0.3));
+          const noise = (Math.random() * 2 - 1) * ref.gain * burstEnv;
+          leftChannel[sampleIndex + j] += noise * (0.8 + Math.random() * 0.4);
+          rightChannel[sampleIndex + j] += noise * (0.8 + Math.random() * 0.4);
+        }
+      }
+    });
+    
+    // Normalize
+    let maxSample = 0;
+    for (let i = 0; i < length; i++) {
+      maxSample = Math.max(maxSample, Math.abs(leftChannel[i]), Math.abs(rightChannel[i]));
+    }
+    if (maxSample > 0) {
+      const normalizeGain = 0.9 / maxSample;
+      for (let i = 0; i < length; i++) {
+        leftChannel[i] *= normalizeGain;
+        rightChannel[i] *= normalizeGain;
+      }
+    }
+    
+    this.convolver.buffer = buffer;
+  }
+}
+
+// Mode parameters at extremes
+// Adjustable particle physics
+let particleForce = 2;
+let particleDamping = 0.96;
+let particleMaxSpeed = 3;
+
+const PURE_CHLADNI = {
+  noiseInfluence: 0.0,
+  get chladniForce() { return particleForce; },
+  get damping() { return particleDamping; },
+  noiseSpeed: 0.0,
+  trailFade: 15
+};
+
+const FULL_PHYSARUM = {
+  noiseInfluence: 0.05,
+  get chladniForce() { return particleForce * 0.53; },  // ~53% of main force
+  get damping() { return particleDamping - 0.02; },     // slightly less damping
+  noiseSpeed: 0.01,
+  trailFade: 25
+};
+
+// Interpolate between two values
+function lerp(a, b, t) {
+  return a + (b - a) * t;
+}
+
+// Get current params based on slider
+function getCurrentParams() {
+  let t = physarumAmount / 100;
+  return {
+    noiseInfluence: lerp(PURE_CHLADNI.noiseInfluence, FULL_PHYSARUM.noiseInfluence, t),
+    chladniForce: lerp(PURE_CHLADNI.chladniForce, FULL_PHYSARUM.chladniForce, t),
+    damping: lerp(PURE_CHLADNI.damping, FULL_PHYSARUM.damping, t),
+    noiseSpeed: lerp(PURE_CHLADNI.noiseSpeed, FULL_PHYSARUM.noiseSpeed, t),
+    trailFade: lerp(PURE_CHLADNI.trailFade, FULL_PHYSARUM.trailFade, t)
+  };
+}
+
+// Cached values for performance
+let halfWidth, halfHeight;
+let flowCols, flowRows;
+
+// Audio
+let audioCtx;
+let filterNode;
+let audioStarted = false;
+let analyser;
+let frequencyData;
+let oscillators = []; // Store oscillator references for harmony switching
+let oscillatorGains = []; // Store gain nodes for volume control
+
+// Color state - tied to audio/modes
+let currentHue = 30;        // Current display hue
+let targetHue = 30;         // Target hue (based on mode complexity)
+let audioEnergy = 0;        // Smoothed audio energy for brightness
+let currentBlendMode;       // Current blend mode for particles (set in setup)
+
+// Master bus nodes (for UI control)
+let masterBus = {
+  saturator: null,
+  eqLow: null,
+  eqMid1: null,
+  eqMid2: null,
+  eqHigh: null,
+  compressor: null,
+  widthSideGain: null,
+  limiter: null,
+  dryGain: null,
+  wetGain: null,
+  reverb: null
+};
+
+// Panel toggle
+function togglePanel() {
+  const panel = document.getElementById('masterPanel');
+  const arrow = document.getElementById('panelArrow');
+  panel.classList.toggle('collapsed');
+  arrow.textContent = panel.classList.contains('collapsed') ? '◀' : '▼';
+}
+
+// PLATE MODE: Natural resonant frequencies of the plate
+// Plate constant C = 22 Hz (tuned to A2)
+
+const PLATE_NOTES = [
+  // All plate resonances - f = 22 × (m² + n²) - tuned to A2 (110 Hz)
+  { name: '44',   freq: 44,   m: 1, n: 1 },   // 22 × 2 = 44 Hz
+  { name: '110',  freq: 110,  m: 1, n: 2 },   // 22 × 5 = 110 Hz (A2)
+  { name: '176',  freq: 176,  m: 2, n: 2 },   // 22 × 8 = 176 Hz
+  { name: '220',  freq: 220,  m: 1, n: 3 },   // 22 × 10 = 220 Hz (A3)
+  { name: '286',  freq: 286,  m: 2, n: 3 },   // 22 × 13 = 286 Hz
+  { name: '374',  freq: 374,  m: 1, n: 4 },   // 22 × 17 = 374 Hz
+  { name: '396',  freq: 396,  m: 3, n: 3 },   // 22 × 18 = 396 Hz
+  { name: '440',  freq: 440,  m: 2, n: 4 },   // 22 × 20 = 440 Hz (A4 concert!)
+  { name: '550',  freq: 550,  m: 3, n: 4 },   // 22 × 25 = 550 Hz
+  { name: '572',  freq: 572,  m: 1, n: 5 },   // 22 × 26 = 572 Hz
+  { name: '638',  freq: 638,  m: 2, n: 5 },   // 22 × 29 = 638 Hz
+  { name: '704',  freq: 704,  m: 4, n: 4 },   // 22 × 32 = 704 Hz
+  { name: '748',  freq: 748,  m: 3, n: 5 },   // 22 × 34 = 748 Hz
+  { name: '814',  freq: 814,  m: 1, n: 6 },   // 22 × 37 = 814 Hz
+  { name: '880',  freq: 880,  m: 2, n: 6 },   // 22 × 40 = 880 Hz (A5)
+  { name: '902',  freq: 902,  m: 4, n: 5 },   // 22 × 41 = 902 Hz
+  { name: '990',  freq: 990,  m: 3, n: 6 },   // 22 × 45 = 990 Hz
+  { name: '1100', freq: 1100, m: 5, n: 5 },   // 22 × 50 = 1100 Hz
+  { name: '1100b', freq: 1100, m: 1, n: 7 },  // 22 × 50 = 1100 Hz (same freq, different pattern!)
+  { name: '1144', freq: 1144, m: 4, n: 6 },   // 22 × 52 = 1144 Hz
+  { name: '1166', freq: 1166, m: 2, n: 7 },   // 22 × 53 = 1166 Hz
+  { name: '1342', freq: 1342, m: 5, n: 6 }    // 22 × 61 = 1342 Hz
+];
+
+let currentNoteIndex = 0;
+let noteTimer = 0;
+
+// Build chladniModes from current note
+function getChladniModes() {
+  const note = PLATE_NOTES[currentNoteIndex];
+  return [{ 
+    m: note.m, 
+    n: note.n, 
+    freq: note.freq 
+  }];
+}
+
+let chladniModes = getChladniModes();
+
+let modeAmplitudes = [1];
+let chladniTime = 0;
+const CHLADNI_SPEED = 0.02;
+
+let dominantMode = 0;
+
+// Precomputed field cache
+let fieldCache;
+let fieldResolution = 4;
+let fieldCols, fieldRows;
+
+function getViewportSize() {
+  // Use visualViewport if available (handles mobile browser chrome better)
+  if (window.visualViewport) {
+    return {
+      w: window.visualViewport.width,
+      h: window.visualViewport.height
+    };
+  }
+  return {
+    w: window.innerWidth,
+    h: window.innerHeight
+  };
+}
+
+function updateOrientation() {
+  // Mobile: fullscreen but with rotation to preserve composition
+  // PC: render as portrait with phone aspect ratio, centered with black bars
+  isLandscape = width > height;
+  
+  if (isMobile) {
+    // MOBILE: Always fullscreen, but in landscape we rotate to preserve composition
+    if (isLandscape) {
+      // Landscape: render dimensions are swapped (we'll rotate the view)
+      renderHeight = width;   // After rotation, height becomes width
+      renderWidth = height;   // After rotation, width becomes height
+    } else {
+      // Portrait: normal fullscreen
+      renderWidth = width;
+      renderHeight = height;
+    }
+    offsetX = 0;
+    offsetY = 0;
+  } else {
+    // PC: Maintain aspect ratio with letterboxing
+    if (isLandscape) {
+      // PC Landscape: Wide bracelet mode — fill width, short height, NO rotation
+      // First compute natural centering to find top margin
+      let naturalHeight = Math.round(width / LANDSCAPE_ASPECT);
+      let topMargin = (height - naturalHeight) / 2;
+      let sideMargin = topMargin;  // Same as the top margin
+      
+      // Shrink render area to respect side margins
+      renderWidth = Math.round(width - sideMargin * 2);
+      renderHeight = Math.round(renderWidth / LANDSCAPE_ASPECT);
+      offsetX = sideMargin;
+      offsetY = (height - renderHeight) / 2;
+    } else {
+      // Portrait: fit to screen maintaining aspect ratio
+      let aspectScreen = width / height;
+      
+      if (aspectScreen > TARGET_ASPECT) {
+        // Screen is wider than target - use full height, center horizontally
+        renderHeight = height;
+        renderWidth = Math.round(height * TARGET_ASPECT);
+        offsetX = (width - renderWidth) / 2;
+        offsetY = 0;
+      } else {
+        // Screen is narrower than target - use full width, center vertically
+        renderWidth = width;
+        renderHeight = Math.round(width / TARGET_ASPECT);
+        offsetX = 0;
+        offsetY = (height - renderHeight) / 2;
+      }
+    }
+  }
+}
+
+// Draw black letterbox bars - called once on setup/resize, not every frame
+function drawLetterbox() {
+  // Mobile: no letterboxing needed - always fullscreen
+  if (isMobile) return;
+  
+  push();
+  resetMatrix();
+  fill(0);
+  noStroke();
+  if (isLandscape && isMobile) {
+    // Mobile landscape: simulation is rotated - black bars on left/right
+    let barWidth = (width - renderHeight) / 2;
+    rect(0, 0, barWidth, height);
+    rect(width - barWidth, 0, barWidth, height);
+  } else {
+    // Portrait or PC landscape - black bars based on offset
+    if (offsetX > 0) {
+      // Bars on left and right
+      rect(0, 0, offsetX, height);
+      rect(width - offsetX, 0, offsetX, height);
+    }
+    if (offsetY > 0) {
+      // Bars on top and bottom
+      rect(0, 0, width, offsetY);
+      rect(0, height - offsetY, width, offsetY);
+    }
+  }
+  pop();
+}
+
+function updateParticleSize() {
+  // Particle size is now fixed at 16px - function kept for compatibility
+}
+
+function setup() {
+  // Use visualViewport for better mobile support
+  let vp = getViewportSize();
+  createCanvas(vp.w, vp.h);
+  background(0);
+  frameRate(isMobile ? 30 : 60);  // 30fps on mobile for better performance
+  if (isMobile) noSmooth();  // Disable anti-aliasing on mobile
+  
+  // Initialize blend mode now that p5 constants are available
+  currentBlendMode = SCREEN;
+  
+  // Determine orientation and set render dimensions
+  updateOrientation();
+  
+  // Update particle size based on render dimensions
+  updateParticleSize();
+  
+  halfWidth = renderWidth * 0.5;
+  halfHeight = renderHeight * 0.5;
+  
+  for (let i = 0; i < PARTICLE_COUNT; i++) {
+    physarums.push(new Physarum(random(halfWidth), random(renderHeight)));
+  }
+  
+  flowCols = ceil(renderWidth / resolution);
+  flowRows = ceil(renderHeight / resolution);
+  flowField = new Float32Array(flowCols * flowRows);
+  for (let i = 0; i < flowField.length; i++) {
+    flowField[i] = random(TWO_PI);
+  }
+  
+  precomputeChladniField();
+  
+  // Draw letterbox bars once at startup
+  drawLetterbox();
+  
+  document.getElementById('startAudio').addEventListener('click', initAudio);
+  
+  const slider = document.getElementById('physarumSlider');
+  slider.addEventListener('input', function(e) {
+    physarumAmount = parseInt(e.target.value);
+  });
+  
+  // === MASTER BUS UI CONTROLS ===
+  function setupMasterBusUI() {
+    // Reverb Mix
+    document.getElementById('reverbMix').addEventListener('input', function(e) {
+      const wet = parseInt(e.target.value) / 100;
+      const dry = 1 - wet;
+      if (masterBus.dryGain) masterBus.dryGain.gain.value = dry;
+      if (masterBus.wetGain) masterBus.wetGain.gain.value = wet;
+      document.getElementById('reverbMixVal').textContent = e.target.value + '%';
+    });
+    
+    // Reverb Duration
+    document.getElementById('reverbDur').addEventListener('input', function(e) {
+      if (masterBus.reverb) {
+        masterBus.reverb.duration = parseFloat(e.target.value);
+        masterBus.reverb.generateIR();
+      }
+      document.getElementById('reverbDurVal').textContent = e.target.value + 's';
+    });
+    
+    // Reverb Decay
+    document.getElementById('reverbDecay').addEventListener('input', function(e) {
+      if (masterBus.reverb) {
+        masterBus.reverb.decay = parseFloat(e.target.value);
+        masterBus.reverb.generateIR();
+      }
+      document.getElementById('reverbDecayVal').textContent = e.target.value;
+    });
+    
+    // EQ Low
+    document.getElementById('eqLow').addEventListener('input', function(e) {
+      if (masterBus.eqLow) masterBus.eqLow.gain.value = parseFloat(e.target.value);
+      document.getElementById('eqLowVal').textContent = e.target.value;
+    });
+    
+    // EQ Mid1
+    document.getElementById('eqMid1').addEventListener('input', function(e) {
+      if (masterBus.eqMid1) masterBus.eqMid1.gain.value = parseFloat(e.target.value);
+      document.getElementById('eqMid1Val').textContent = e.target.value;
+    });
+    
+    // EQ Mid2
+    document.getElementById('eqMid2').addEventListener('input', function(e) {
+      if (masterBus.eqMid2) masterBus.eqMid2.gain.value = parseFloat(e.target.value);
+      document.getElementById('eqMid2Val').textContent = e.target.value;
+    });
+    
+    // EQ High
+    document.getElementById('eqHigh').addEventListener('input', function(e) {
+      if (masterBus.eqHigh) masterBus.eqHigh.gain.value = parseFloat(e.target.value);
+      document.getElementById('eqHighVal').textContent = e.target.value;
+    });
+    
+    // Compressor Threshold
+    document.getElementById('compThresh').addEventListener('input', function(e) {
+      if (masterBus.compressor) masterBus.compressor.threshold.value = parseFloat(e.target.value);
+      document.getElementById('compThreshVal').textContent = e.target.value;
+    });
+    
+    // Compressor Ratio
+    document.getElementById('compRatio').addEventListener('input', function(e) {
+      if (masterBus.compressor) masterBus.compressor.ratio.value = parseFloat(e.target.value);
+      document.getElementById('compRatioVal').textContent = e.target.value + ':1';
+    });
+    
+    // Saturator
+    document.getElementById('satAmount').addEventListener('input', function(e) {
+      if (masterBus.saturator && masterBus.makeDistortionCurve) {
+        masterBus.saturator.curve = masterBus.makeDistortionCurve(parseFloat(e.target.value));
+      }
+      document.getElementById('satAmountVal').textContent = e.target.value;
+    });
+    
+    // Stereo Width
+    document.getElementById('stereoWidth').addEventListener('input', function(e) {
+      if (masterBus.widthSideGain) masterBus.widthSideGain.gain.value = parseFloat(e.target.value) / 100;
+      document.getElementById('stereoWidthVal').textContent = e.target.value + '%';
+    });
+    
+    // Bass Mono Crossover Frequency
+    document.getElementById('crossoverFreq').addEventListener('input', function(e) {
+      const freq = parseFloat(e.target.value);
+      if (masterBus.crossoverFilters) {
+        masterBus.crossoverFilters.forEach(filter => {
+          filter.frequency.value = freq;
+        });
+      }
+      document.getElementById('crossoverFreqVal').textContent = freq + 'Hz';
+    });
+    
+    // Limiter Threshold
+    document.getElementById('limThresh').addEventListener('input', function(e) {
+      if (masterBus.limiter) masterBus.limiter.threshold.value = parseFloat(e.target.value);
+      document.getElementById('limThreshVal').textContent = e.target.value;
+    });
+    
+    // Particle Force
+    document.getElementById('chladniForce').addEventListener('input', function(e) {
+      particleForce = parseFloat(e.target.value);
+      document.getElementById('chladniForceVal').textContent = e.target.value;
+    });
+    
+    // Particle Damping
+    document.getElementById('particleDamping').addEventListener('input', function(e) {
+      particleDamping = parseFloat(e.target.value);
+      document.getElementById('particleDampingVal').textContent = e.target.value;
+    });
+    
+    // Max Speed
+    document.getElementById('maxSpeed').addEventListener('input', function(e) {
+      particleMaxSpeed = parseFloat(e.target.value);
+      document.getElementById('maxSpeedVal').textContent = e.target.value;
+    });
+    
+    // Blend Mode
+    document.getElementById('blendMode').addEventListener('change', function(e) {
+      const modes = {
+        'ADD': ADD,
+        'SCREEN': SCREEN,
+        'LIGHTEST': LIGHTEST,
+        'BLEND': BLEND,
+        'OVERLAY': OVERLAY,
+        'SOFT_LIGHT': SOFT_LIGHT,
+        'HARD_LIGHT': HARD_LIGHT,
+        'DODGE': DODGE,
+        'BURN': BURN,
+        'DIFFERENCE': DIFFERENCE,
+        'EXCLUSION': EXCLUSION,
+        'MULTIPLY': MULTIPLY,
+        'DARKEST': DARKEST
+      };
+      currentBlendMode = modes[e.target.value];
+    });
+    
+    // Prevent UI interactions from triggering canvas
+    const panel = document.getElementById('masterPanel');
+    panel.addEventListener('mousedown', () => isInteractingWithUI = true);
+    panel.addEventListener('touchstart', () => isInteractingWithUI = true);
+  }
+  setupMasterBusUI();
+  
+  // Prevent mouse attraction when interacting with UI
+  const controls = document.querySelector('.controls');
+  controls.addEventListener('mousedown', () => isInteractingWithUI = true);
+  controls.addEventListener('touchstart', () => isInteractingWithUI = true);
+  document.addEventListener('mouseup', () => isInteractingWithUI = false);
+  document.addEventListener('touchend', () => isInteractingWithUI = false);
+}
+
+// Boost volume of current note, keep others quieter - gradual crossfade
+function updateNoteVolumes() {
+  if (!audioStarted || oscillatorGains.length === 0) return;
+  
+  const time = audioCtx.currentTime;
+  const fadeTime = 1.5;  // 1.5 second crossfade
+  
+  // Plate mode: 22 notes, chosen = 0.09, others = 0.015
+  oscillatorGains.forEach((gainNode, i) => {
+    let targetGain;
+    if (i >= PLATE_NOTES.length) {
+      targetGain = 0;  // Mute unused oscillators
+    } else if (i === currentNoteIndex) {
+      targetGain = 0.09;  // Current note louder
+    } else {
+      targetGain = 0.015;  // Background notes
+    }
+    // Cancel any scheduled changes and ramp smoothly
+    gainNode.gain.cancelScheduledValues(time);
+    gainNode.gain.setValueAtTime(gainNode.gain.value, time);
+    gainNode.gain.linearRampToValueAtTime(targetGain, time + fadeTime);
+  });
+}
+
+function precomputeChladniField() {
+  fieldCols = ceil(renderWidth / fieldResolution);
+  fieldRows = ceil(renderHeight / fieldResolution);
+  fieldCache = new Float32Array(fieldCols * fieldRows * chladniModes.length);
+  
+  let size = min(renderWidth, renderHeight);
+  let fieldOffsetX = (renderWidth - size) / 2;
+  let fieldOffsetY = (renderHeight - size) / 2;
+  
+  for (let i = 0; i < fieldCols; i++) {
+    for (let j = 0; j < fieldRows; j++) {
+      let px = (i * fieldResolution - fieldOffsetX) / size * 2 - 1;
+      let py = (j * fieldResolution - fieldOffsetY) / size * 2 - 1;
+      
+      let idx = (i * fieldRows + j) * chladniModes.length;
+      
+      for (let k = 0; k < chladniModes.length; k++) {
+        let mode = chladniModes[k];
+        let pattern = Math.cos(mode.m * Math.PI * px) * Math.cos(mode.n * Math.PI * py) 
+                    + Math.cos(mode.n * Math.PI * px) * Math.cos(mode.m * Math.PI * py);
+        fieldCache[idx + k] = pattern;
+      }
+    }
+  }
+}
+
+function getChladniForce(x, y, t) {
+  let i = constrain(floor(x / fieldResolution), 0, fieldCols - 2);
+  let j = constrain(floor(y / fieldResolution), 0, fieldRows - 2);
+  
+  let idx = (i * fieldRows + j) * chladniModes.length;
+  let idx_right = ((i + 1) * fieldRows + j) * chladniModes.length;
+  let idx_down = (i * fieldRows + (j + 1)) * chladniModes.length;
+  
+  let z = 0, z_right = 0, z_down = 0;
+  
+  for (let k = 0; k < chladniModes.length; k++) {
+    let mode = chladniModes[k];
+    let omega = mode.freq * 0.008;
+    let temporal = Math.cos(omega * t);
+    let amp = modeAmplitudes[k] * temporal;
+    
+    z += amp * fieldCache[idx + k];
+    z_right += amp * fieldCache[idx_right + k];
+    z_down += amp * fieldCache[idx_down + k];
+  }
+  
+  let dzdx = (z_right - z) / fieldResolution;
+  let dzdy = (z_down - z) / fieldResolution;
+  
+  return { 
+    x: -2 * z * dzdx, 
+    y: -2 * z * dzdy
+  };
+}
+
+function initAudio() {
+  if (audioStarted) return;
+  
+  try {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: 'playback' });
+    
+    analyser = audioCtx.createAnalyser();
+    analyser.fftSize = 2048;
+    frequencyData = new Uint8Array(analyser.frequencyBinCount);
+    
+    // Distortion curve for saturator
+    function makeDistortionCurve(amount) {
+      const k = typeof amount === 'number' ? amount : 50;
+      const n_samples = 44100;
+      const curve = new Float32Array(n_samples);
+      const deg = Math.PI / 180;
+      for (let i = 0; i < n_samples; ++i) {
+        let x = i * 2 / n_samples - 1;
+        curve[i] = (3 + k) * x * 20 * deg / (Math.PI + k * Math.abs(x));
+      }
+      return curve;
+    }
+    
+    // === MASTER BUS ===
+    const masterInput = audioCtx.createGain();
+    masterInput.gain.setValueAtTime(0, audioCtx.currentTime);
+    masterInput.gain.linearRampToValueAtTime(0.8, audioCtx.currentTime + 3); // 3 second fade in
+    
+    // 1. SATURATOR
+    const saturator = audioCtx.createWaveShaper();
+    saturator.curve = makeDistortionCurve(7);
+    saturator.oversample = '4x';
+    const dcBlocker = audioCtx.createBiquadFilter();
+    dcBlocker.type = 'highpass';
+    dcBlocker.frequency.value = 10;
+    
+    // 2. EQ
+    const eqLow = audioCtx.createBiquadFilter();
+    eqLow.type = 'lowshelf'; eqLow.frequency.value = 100; eqLow.Q.value = 1.0; eqLow.gain.value = 1;
+    const eqMid1 = audioCtx.createBiquadFilter();
+    eqMid1.type = 'peaking'; eqMid1.frequency.value = 500; eqMid1.Q.value = 1.0; eqMid1.gain.value = 0;
+    const eqMid2 = audioCtx.createBiquadFilter();
+    eqMid2.type = 'peaking'; eqMid2.frequency.value = 2000; eqMid2.Q.value = 1.0; eqMid2.gain.value = 3;
+    const eqHigh = audioCtx.createBiquadFilter();
+    eqHigh.type = 'highshelf'; eqHigh.frequency.value = 8000; eqHigh.Q.value = 1.0; eqHigh.gain.value = 5;
+    
+    // 3. COMPRESSOR
+    const compressor = audioCtx.createDynamicsCompressor();
+    compressor.threshold.value = -24;
+    compressor.ratio.value = 4;
+    compressor.attack.value = 0.03;
+    compressor.release.value = 0.25;
+    const makeupGain = audioCtx.createGain();
+    makeupGain.gain.value = 1.0;
+    
+    // 4. STEREO WIDTH with Bass Mono (crossover at 200Hz)
+    const widthCrossoverFreq = 66;
+    
+    // Split into low and high bands
+    const lowPassL = audioCtx.createBiquadFilter();
+    lowPassL.type = 'lowpass';
+    lowPassL.frequency.value = widthCrossoverFreq;
+    lowPassL.Q.value = 0.707;
+    
+    const lowPassR = audioCtx.createBiquadFilter();
+    lowPassR.type = 'lowpass';
+    lowPassR.frequency.value = widthCrossoverFreq;
+    lowPassR.Q.value = 0.707;
+    
+    const highPassL = audioCtx.createBiquadFilter();
+    highPassL.type = 'highpass';
+    highPassL.frequency.value = widthCrossoverFreq;
+    highPassL.Q.value = 0.707;
+    
+    const highPassR = audioCtx.createBiquadFilter();
+    highPassR.type = 'highpass';
+    highPassR.frequency.value = widthCrossoverFreq;
+    highPassR.Q.value = 0.707;
+    
+    // Bass mono: sum L+R below crossover
+    const bassMonoSum = audioCtx.createGain();
+    bassMonoSum.gain.value = 0.5;
+    
+    // Mid/Side processing for highs only
+    const widthSplitter = audioCtx.createChannelSplitter(2);
+    const widthMerger = audioCtx.createChannelMerger(2);
+    const midSum = audioCtx.createGain(); midSum.gain.value = 0.5;
+    const sideDiff = audioCtx.createGain(); sideDiff.gain.value = 0.5;
+    const sideInverter = audioCtx.createGain(); sideInverter.gain.value = -1;
+    const widthMidGain = audioCtx.createGain(); widthMidGain.gain.value = 1;
+    const widthSideGain = audioCtx.createGain(); widthSideGain.gain.value = 2;
+    const decodeL = audioCtx.createGain(); decodeL.gain.value = 1;
+    const decodeR = audioCtx.createGain(); decodeR.gain.value = 1;
+    const decodeSideInv = audioCtx.createGain(); decodeSideInv.gain.value = -1;
+    
+    // Final mix node before limiter
+    const widthOutputMerger = audioCtx.createChannelMerger(2);
+    
+    // 5. LIMITER
+    const limiterGain = audioCtx.createGain();
+    limiterGain.gain.value = 1.0;
+    const limiter = audioCtx.createDynamicsCompressor();
+    limiter.threshold.value = -0.1;
+    limiter.ratio.value = 20.0;
+    limiter.attack.value = 0.000;
+    limiter.release.value = 0.1;
+    
+    // === MASTER BUS CHAIN ===
+    masterInput.connect(saturator);
+    saturator.connect(dcBlocker);
+    dcBlocker.connect(eqLow);
+    eqLow.connect(eqMid1);
+    eqMid1.connect(eqMid2);
+    eqMid2.connect(eqHigh);
+    eqHigh.connect(compressor);
+    compressor.connect(makeupGain);
+    
+    // Split stereo for crossover
+    const preSplitter = audioCtx.createChannelSplitter(2);
+    makeupGain.connect(preSplitter);
+    
+    // LOW BAND: Bass mono (L+R summed to center)
+    preSplitter.connect(lowPassL, 0);
+    preSplitter.connect(lowPassR, 1);
+    lowPassL.connect(bassMonoSum);
+    lowPassR.connect(bassMonoSum);
+    // Send mono bass to both L and R
+    bassMonoSum.connect(widthOutputMerger, 0, 0);
+    bassMonoSum.connect(widthOutputMerger, 0, 1);
+    
+    // HIGH BAND: Stereo width processing
+    preSplitter.connect(highPassL, 0);
+    preSplitter.connect(highPassR, 1);
+    
+    // Recombine highs for Mid/Side processing
+    const highMerger = audioCtx.createChannelMerger(2);
+    highPassL.connect(highMerger, 0, 0);
+    highPassR.connect(highMerger, 0, 1);
+    
+    // Mid/Side width on highs
+    highMerger.connect(widthSplitter);
+    widthSplitter.connect(midSum, 0);
+    widthSplitter.connect(midSum, 1);
+    widthSplitter.connect(sideDiff, 0);
+    widthSplitter.connect(sideInverter, 1);
+    sideInverter.connect(sideDiff);
+    midSum.connect(widthMidGain);
+    sideDiff.connect(widthSideGain);
+    widthMidGain.connect(decodeL);
+    widthMidGain.connect(decodeR);
+    widthSideGain.connect(decodeL);
+    widthSideGain.connect(decodeSideInv);
+    decodeSideInv.connect(decodeR);
+    decodeL.connect(widthMerger, 0, 0);
+    decodeR.connect(widthMerger, 0, 1);
+    
+    // Add processed highs to output
+    const finalSplitter = audioCtx.createChannelSplitter(2);
+    widthMerger.connect(finalSplitter);
+    finalSplitter.connect(widthOutputMerger, 0, 0);
+    finalSplitter.connect(widthOutputMerger, 0, 1);
+    
+    // To limiter
+    widthOutputMerger.connect(limiterGain);
+    limiterGain.connect(limiter);
+    limiter.connect(audioCtx.destination);
+    
+    // === REVERB ===
+    const reverb = new ConvolutionReverb(audioCtx, {
+      duration: 8.0,
+      decay: 3.0,
+      density: 0.85,
+      damping: 0.4,
+      preDelay: 0.04,
+      stereoWidth: 1.0,
+      outputGain: 0.5,
+      inputHighpass: 120,
+      outputLowpass: 5000
+    });
+    
+    filterNode = audioCtx.createBiquadFilter();
+    filterNode.type = 'lowpass';
+    filterNode.frequency.value = 800;
+    filterNode.Q.value = 1;
+    
+    const dryGain = audioCtx.createGain();
+    dryGain.gain.value = 0.67;
+    const wetGain = audioCtx.createGain();
+    wetGain.gain.value = 0.33;
+    
+    // Store references for UI control
+    masterBus.saturator = saturator;
+    masterBus.eqLow = eqLow;
+    masterBus.eqMid1 = eqMid1;
+    masterBus.eqMid2 = eqMid2;
+    masterBus.eqHigh = eqHigh;
+    masterBus.compressor = compressor;
+    masterBus.widthSideGain = widthSideGain;
+    masterBus.limiter = limiter;
+    masterBus.dryGain = dryGain;
+    masterBus.wetGain = wetGain;
+    masterBus.reverb = reverb;
+    masterBus.makeDistortionCurve = makeDistortionCurve;
+    // Crossover filters for bass mono
+    masterBus.crossoverFilters = [lowPassL, lowPassR, highPassL, highPassR];
+    
+    // Connect: oscillators → filter → analyser → dry/wet → masterInput → master bus
+    filterNode.connect(analyser);
+    analyser.connect(dryGain);
+    analyser.connect(reverb.input);
+    reverb.output.connect(wetGain);
+    dryGain.connect(masterInput);
+    wetGain.connect(masterInput);
+    
+    // Create oscillator groups for all 22 plate modes
+    for (let i = 0; i < PLATE_NOTES.length; i++) {
+      const note = PLATE_NOTES[i];
+      
+      // Master gain for this voice (for volume control)
+      const voiceGain = audioCtx.createGain();
+      voiceGain.gain.value = (i === 0) ? 0.09 : 0.015;  // First note louder
+      oscillatorGains.push(voiceGain);
+      
+      const osc = audioCtx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.value = note.freq;
+      
+      const gain = audioCtx.createGain();
+      gain.gain.value = 0.5;
+      
+      const osc2 = audioCtx.createOscillator();
+      osc2.type = 'sine';
+      osc2.frequency.value = note.freq * 1.004;
+      
+      const gain2 = audioCtx.createGain();
+      gain2.gain.value = 0.3;
+      
+      osc.connect(gain);
+      osc2.connect(gain2);
+      gain.connect(voiceGain);
+      gain2.connect(voiceGain);
+      
+      // Third oscillator only on desktop (performance optimization)
+      let osc3 = null;
+      if (!isMobile) {
+        osc3 = audioCtx.createOscillator();
+        osc3.type = 'triangle';
+        osc3.frequency.value = note.freq * 0.998;
+        
+        const gain3 = audioCtx.createGain();
+        gain3.gain.value = 0.2;
+        
+        osc3.connect(gain3);
+        gain3.connect(voiceGain);
+        osc3.start();
+      }
+      
+      voiceGain.connect(filterNode);
+      
+      osc.start();
+      osc2.start();
+      
+      // Store oscillator references
+      oscillators.push({ osc, osc2, osc3 });
+      
+      // Gentle LFO for movement
+      const lfo = audioCtx.createOscillator();
+      lfo.type = 'sine';
+      lfo.frequency.value = 0.02 + (i % 7) * 0.01;  // Cycle LFO rates
+      
+      const lfoGain = audioCtx.createGain();
+      lfoGain.gain.value = 0.02;
+      
+      lfo.connect(lfoGain);
+      lfoGain.connect(gain.gain);
+      lfo.start();
+      
+      // Slow pitch drift
+      const pitchLfo = audioCtx.createOscillator();
+      pitchLfo.type = 'sine';
+      pitchLfo.frequency.value = 0.03 + i * 0.005;
+      
+      const pitchLfoGain = audioCtx.createGain();
+      pitchLfoGain.gain.value = note.freq * 0.002;  // ~0.2% pitch drift
+      
+      pitchLfo.connect(pitchLfoGain);
+      pitchLfoGain.connect(osc.frequency);
+      pitchLfoGain.connect(osc2.frequency);
+      pitchLfo.start();
+    }
+    
+    audioStarted = true;
+    document.getElementById('startAudio').textContent = '♫ On';
+    document.getElementById('startAudio').style.opacity = '0.5';
+    
+  } catch (e) {
+    console.error('Audio error:', e);
+  }
+}
+
+function updateAudioAnalysis() {
+  noteTimer += 1;
+  
+  // Variable duration based on pattern complexity
+  // Simple patterns (low m+n) = longer duration, complex = shorter
+  // Using Fibonacci-inspired durations: 13s (simple) → 5s (complex)
+  const note = PLATE_NOTES[currentNoteIndex];
+  const complexity = note.m + note.n;  // ranges from 2 to 11
+  // Map: complexity 2 → 780 frames (13s), complexity 11 → 300 frames (5s)
+  const cycleDuration = Math.floor(780 - (complexity - 2) * 53);
+  
+  // Check if we need to move to next note
+  if (noteTimer >= cycleDuration) {
+    noteTimer = 0;
+    currentNoteIndex = (currentNoteIndex + 1) % PLATE_NOTES.length;
+    
+    // Update Chladni pattern for new note
+    chladniModes = getChladniModes();
+    modeAmplitudes = [1];
+    precomputeChladniField();
+    
+    // Update audio volumes to highlight current note
+    updateNoteVolumes();
+    
+    // Set target hue based on mode complexity
+    // complexity ranges from 2 (m=1,n=1) to ~11 (higher modes)
+    // Map: simple (2) → warm amber (30), complex (11) → cool violet (270)
+    const complexity = note.m + note.n;
+    targetHue = 30 + (complexity - 2) * 26.7;  // 30 to 270
+  }
+  
+  // Smoothly transition current hue toward target (sync with 1.5s audio crossfade)
+  // ~90 frames at 60fps = 1.5s, so lerp factor of ~0.02
+  currentHue = currentHue + (targetHue - currentHue) * 0.02;
+  
+  // Always keep single mode active
+  modeAmplitudes[0] = 1;
+  dominantMode = 0;
+  
+  // Audio reactivity - boost amplitude based on audio
+  if (!audioStarted || !analyser) return;
+  
+  analyser.getByteFrequencyData(frequencyData);
+  
+  // Get overall audio energy
+  let totalEnergy = 0;
+  for (let i = 0; i < frequencyData.length; i++) {
+    totalEnergy += frequencyData[i];
+  }
+  totalEnergy = totalEnergy / frequencyData.length / 255;
+  
+  // Smooth the audio energy for less jittery brightness
+  audioEnergy = audioEnergy + (totalEnergy - audioEnergy) * 0.15;
+  
+  // Boost based on audio
+  modeAmplitudes[0] *= (0.8 + totalEnergy * 0.8);
+}
+
+function draw() {
+  // Get current mode parameters from slider
+  const params = getCurrentParams();
+  
+  // Handle positioning and landscape rotation
+  push();
+  if (isLandscape && isMobile) {
+    // MOBILE only: Rotate 90° clockwise to preserve composition
+    let centerX = width / 2;
+    let centerY = height / 2;
+    translate(centerX, centerY);
+    rotate(HALF_PI);
+    translate(-renderWidth / 2, -renderHeight / 2);
+  } else {
+    // Portrait or PC landscape - apply centering offset
+    translate(offsetX, offsetY);
+  }
+  
+  // Clip to render area - prevents particle bleed into letterbox
+  drawingContext.save();
+  drawingContext.beginPath();
+  drawingContext.rect(0, 0, renderWidth, renderHeight);
+  drawingContext.clip();
+  
+  translate(halfWidth, halfHeight);
+  scale(zoom);
+  translate(-halfWidth, -halfHeight);
+  
+  colorMode(HSB, 255);
+  noStroke();
+  // Deep cosmic void - dark indigo instead of pure black
+  fill(260, 80, 8, params.trailFade);
+  rect(0, 0, renderWidth, renderHeight);
+  bgNoiseOffset += 0.005;
+  
+  blendMode(currentBlendMode);
+  
+  chladniTime += CHLADNI_SPEED;
+  
+  updateAudioAnalysis();
+  
+  let len = physarums.length;
+  for (let i = 0; i < len; i++) {
+    let p = physarums[i];
+    p.move(params);
+    p.display();
+  }
+  
+  let checkStart = frameCount % 10;
+  for (let i = checkStart; i < len; i += 10) {
+    let p = physarums[i];
+    if (!p.isAlive) {
+      p.reset(random(halfWidth), random(renderHeight));
+    }
+  }
+  
+  blendMode(BLEND);
+  
+  // Restore clipping
+  drawingContext.restore();
+  pop();
+  
+  if (audioStarted && filterNode) {
+    let filterBase = 300 + dominantMode * 100;
+    let filterMod = noise(frameCount * 0.008) * 800 + filterBase;
+    filterMod += Math.sin(frameCount * 0.01) * 200;
+    filterNode.frequency.linearRampToValueAtTime(filterMod, audioCtx.currentTime + 0.1);
+  }
+}
+
+function mouseWheel(event) {
+  let e = event.delta > 0 ? 1 : -1;
+  zoom = constrain(zoom * (1 - e * 0.1), MIN_ZOOM, MAX_ZOOM);
+  return false;
+}
+
+function windowResized() {
+  let vp = getViewportSize();
+  resizeCanvas(vp.w, vp.h);
+  
+  // Update orientation first
+  updateOrientation();
+  
+  // Update particle size for new render dimensions
+  updateParticleSize();
+  
+  halfWidth = renderWidth * 0.5;
+  halfHeight = renderHeight * 0.5;
+  
+  // Constrain existing particles to new bounds
+  for (let i = 0; i < physarums.length; i++) {
+    physarums[i].x = physarums[i].x % halfWidth;
+    physarums[i].y = physarums[i].y % renderHeight;
+  }
+  
+  // Recompute Chladni field for new dimensions
+  precomputeChladniField();
+  
+  // Redraw letterbox bars
+  drawLetterbox();
+}
+
+// Debounced resize to handle mobile orientation changes properly
+let resizeTimeout;
+window.addEventListener('resize', function() {
+  clearTimeout(resizeTimeout);
+  resizeTimeout = setTimeout(function() {
+    windowResized();
+  }, 100);
+});
+
+// Also listen to visualViewport changes for mobile
+if (window.visualViewport) {
+  window.visualViewport.addEventListener('resize', function() {
+    clearTimeout(resizeTimeout);
+    resizeTimeout = setTimeout(function() {
+      windowResized();
+    }, 100);
+  });
+}
+
+class Physarum {
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+    this.vx = 0;
+    this.vy = 0;
+    this.xOff = random(1000);
+    this.yOff = random(1000);
+    this.isAlive = true;
+    this.prevAngle = 0;
+  }
+  
+  reset(x, y) {
+    this.x = x;
+    this.y = y;
+    this.vx = 0;
+    this.vy = 0;
+    this.xOff = random(1000);
+    this.yOff = random(1000);
+    this.isAlive = true;
+    this.prevAngle = 0;
+  }
+  
+  move(params) {
+    let x = this.x;
+    let y = this.y;
+    let xOff = this.xOff;
+    let yOff = this.yOff;
+    let prevAngle = this.prevAngle;
+    
+    // Noise-based flow (varies by mode)
+    let angle = TWO_PI * noise(xOff, yOff);
+    angle = prevAngle + (angle - prevAngle) * 0.1;
+    
+    // Base flow from noise (mode-dependent)
+    let fx = cos(angle) * params.noiseInfluence;
+    let fy = sin(angle) * params.noiseInfluence;
+    
+    // Apply Chladni force (mode-dependent strength)
+    let chladniForce = getChladniForce(x, y, chladniTime);
+    fx += chladniForce.x * params.chladniForce;
+    fy += chladniForce.y * params.chladniForce;
+    
+    // Update velocity with mode-dependent damping
+    this.vx = this.vx * params.damping + fx;
+    this.vy = this.vy * params.damping + fy;
+    
+    // Clamp velocity
+    let speed = Math.sqrt(this.vx * this.vx + this.vy * this.vy);
+    if (speed > particleMaxSpeed) {
+      this.vx = (this.vx / speed) * particleMaxSpeed;
+      this.vy = (this.vy / speed) * particleMaxSpeed;
+    }
+    
+    x += this.vx;
+    y += this.vy;
+    
+    if (mouseIsPressed && !isInteractingWithUI) {
+      // Convert mouse to render-local coordinates, accounting for rotation and offset
+      let mx = mouseX;
+      let my = mouseY;
+      
+      // If mobile landscape, transform mouse coords to match rotated canvas
+      if (isLandscape && isMobile) {
+        // Reverse the rotation transform
+        let centerX = width / 2;
+        let centerY = height / 2;
+        let dx = mouseX - centerX;
+        let dy = mouseY - centerY;
+        mx = renderWidth / 2 + dy;
+        my = renderHeight / 2 - dx;
+      } else {
+        // Portrait - just account for centering offset
+        mx = mouseX - offsetX;
+        my = mouseY - offsetY;
+      }
+      
+      let adjustedMouseX = (mx - halfWidth) / zoom + halfWidth;
+      let adjustedMouseY = (my - halfHeight) / zoom + halfHeight;
+      let angleToMouse = atan2(adjustedMouseY - y, adjustedMouseX - x);
+      this.vx += cos(angleToMouse) * 0.5;
+      this.vy += sin(angleToMouse) * 0.5;
+    }
+    
+    // Wrap x within LEFT HALF only
+    if (x < 0) x = halfWidth;
+    else if (x > halfWidth) x = 0;
+    
+    // Y wraps within renderHeight
+    if (y < 0) y = renderHeight;
+    else if (y > renderHeight) y = 0;
+    
+    if (random() < 0.001) {
+      this.isAlive = false;
+    }
+    
+    this.x = x;
+    this.y = y;
+    this.xOff = xOff + params.noiseSpeed;
+    this.yOff = yOff + params.noiseSpeed;
+    this.prevAngle = angle;
+  }
+  
+  display() {
+    let x = this.x;
+    let y = this.y;
+    let mirroredX = renderWidth - x;  // Mirror position using renderWidth
+    let hueValue = (frameCount + x) % 255;
+    
+    fill(hueValue, 255, 255);
+    noStroke();
+    
+    // Draw particle in left half
+    ellipse(x, y, PARTICLE_SIZE, PARTICLE_SIZE);
+    
+    // Mirror to right half
+    ellipse(mirroredX, y, PARTICLE_SIZE, PARTICLE_SIZE);
+  }
+}
+  </script>
+</body>
+</html>

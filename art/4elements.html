@@ -1,0 +1,3444 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>4 Elements – Ambient Drift</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;1,300&display=swap');
+    
+    * { box-sizing: border-box; }
+    
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      background: #f8f6f3;
+      color: #2a2a2a;
+      font-family: 'Cormorant Garamond', Georgia, serif;
+      overflow: hidden;
+      cursor: crosshair;
+    }
+    
+    #pad {
+      position: fixed;
+      inset: 0;
+      display: block;
+      touch-action: none;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="pad"></canvas>
+
+<script>
+// =======================================================
+// AMBIENT DRIFT – A contemplative reimagining
+// =======================================================
+// Instead of discrete notes triggered by clocks, we use:
+// - Continuously playing drone layers that crossfade based on position
+// - Slow LFOs modulating filter cutoff, detune, and amplitude
+// - Long attack/release envelopes
+// - Gentle granular textures
+// - Position controls blend between four elemental "pads"
+// =======================================================
+
+// Orientation detection: portrait (tall) vs landscape (wide)
+function isLandscape() {
+  return window.innerWidth > window.innerHeight;
+}
+
+let audioCtx = null;
+let masterGain, reverbNode, reverbGain;
+let padCanvas, padCtx;
+let padWidth = 0, padHeight = 0;
+
+// Smooth position tracking
+let targetX = 0, targetY = 0;  // [-1, 1]
+let currentX = 0, currentY = 0;
+
+// Movement velocity tracking for dynamic swells
+let prevX = 0, prevY = 0;
+let currentVelocity = 0;        // Smoothed velocity (0-1)
+let movementBrightness = null;  // Filter node for movement response
+let movementGain = null;        // Gain node for movement response
+
+// Audio update throttling (avoid redundant Web Audio API calls)
+let lastAudioX = 0, lastAudioY = 0;
+
+// Register shift - vertical position controls bass/treble balance
+let registerHighpass = null;    // Highpass filter for vertical register
+let registerLowpass = null;     // Lowpass filter for vertical register
+
+// Auto modes (spirograph-inspired movements) - 10 diverse patterns
+let autoModeEnabled = false;
+let autoMode = 1;
+let autoStartTime = 0;
+let tabHiddenTime = 0;  // Track when tab became hidden for pause compensation
+
+// Trail painting system
+const trail = [];
+const MAX_TRAIL_LENGTH = 8000;
+let lastTrailPoint = null;
+
+// Offscreen canvas for trail (performance optimization)
+let trailCanvas = null;
+let trailCtx = null;
+let lastDrawnTrailIndex = 0;
+let cachedPadHalf = 0;
+let cachedCenterX = 0;
+let cachedCenterY = 0;
+
+// Offscreen canvas for static background (paper + grid + pad border)
+let bgCanvas = null;
+let bgCtx = null;
+let bgNeedsRedraw = true;
+let bgCachedColor = { r: 0, g: 0, b: 0 };
+
+// Offscreen canvas for buttons (only redrawn on mode change or resize)
+let btnCanvas = null;
+let btnCtx = null;
+let btnNeedsRedraw = true;
+let btnCachedAutoMode = -1;
+let btnCachedAutoEnabled = false;
+
+// Offscreen canvas for cursor glow (redrawn only when color changes significantly)
+let glowCanvas = null;
+let glowCtx = null;
+let glowCachedColor = { r: 0, g: 0, b: 0 };
+const GLOW_SIZE = 160; // diameter of glow canvas
+
+// Melody button glow cache
+let melodyGlowCanvas = null;
+let melodyGlowCtx = null;
+let melodyGlowCachedColor = { r: 0, g: 0, b: 0 };
+const MELODY_GLOW_SIZE = 80;
+
+// Pad area scale (uniform square based on min dimension)
+const PAD_SCALE = 0.42;
+
+// Paper texture
+let paperTex = null;
+let paperPattern = null;
+
+// 10 Spirograph patterns - all normalized to fit within [-1, 1]
+const PATTERNS = [
+  {
+    name: 'Lissajous',
+    // Classic figure-8 variant (3:2 ratio) - outputs already in [-1, 1]
+    fn: (u) => {
+      const angle = u * Math.PI * 2;
+      const x = Math.sin(3 * angle);
+      const y = Math.sin(2 * angle + Math.PI / 4);
+      return { x: x * 0.99, y: y * 0.99 };
+    },
+    // Icon version: squash Y to make orientation visible when rotated
+    iconFn: (u) => {
+      const angle = u * Math.PI * 2;
+      const x = Math.sin(3 * angle);
+      const y = Math.sin(2 * angle + Math.PI / 4);
+      return { x: x * 0.99, y: y * 0.55 };
+    },
+    cycleMs: 15000,
+    scale: 1.0
+  },
+  {
+    name: 'Spirograph',
+    // The iconic toy pattern (7 loops)
+    // Max extent is (R-r) + d = 0.65 + 0.75 = 1.4, normalize to 1
+    fn: (u) => {
+      const t = u * Math.PI * 2 * 7;
+      const R = 1.0, r = 0.35, d = 0.75;
+      const xRaw = (R - r) * Math.cos(t) + d * Math.cos(((R - r) / r) * t);
+      const yRaw = (R - r) * Math.sin(t) - d * Math.sin(((R - r) / r) * t);
+      const maxExtent = (R - r) + d;
+      return { x: xRaw / maxExtent * 0.99, y: yRaw / maxExtent * 0.99 };
+    },
+    cycleMs: 45000,
+    scale: 1.0
+  },
+  {
+    name: 'Starburst',
+    // Sharp pointed star (6 points, deep cusps)
+    fn: (u) => {
+      const t = u * Math.PI * 2 * 6;
+      const R = 1.0, r = 1/6, d = 0.9;
+      const xRaw = (R - r) * Math.cos(t) + d * Math.cos(((R - r) / r) * t);
+      const yRaw = (R - r) * Math.sin(t) - d * Math.sin(((R - r) / r) * t);
+      const maxExtent = (R - r) + d;
+      return { x: xRaw / maxExtent * 0.99, y: yRaw / maxExtent * 0.99 };
+    },
+    cycleMs: 37500,
+    scale: 1.0
+  },
+  {
+    name: 'Rose',
+    // Mathematical rose (8 petals) - max r = 1
+    fn: (u) => {
+      const k = 4;
+      const angle = u * Math.PI * 2 * 2;
+      const r = Math.cos(k * angle);
+      const x = r * Math.cos(angle);
+      const y = r * Math.sin(angle);
+      return { x: x * 0.99, y: y * 0.99 };
+    },
+    cycleMs: 30000,
+    scale: 1.0
+  },
+  {
+    name: 'Epitrochoid',
+    // Outer rolling circle - 7 petals, clean closure
+    fn: (u) => {
+      const t = u * Math.PI * 2;
+      const R = 0.6, r = 0.1, d = 0.5;
+      const xRaw = (R + r) * Math.cos(t) - d * Math.cos(((R + r) / r) * t);
+      const yRaw = (R + r) * Math.sin(t) - d * Math.sin(((R + r) / r) * t);
+      const maxExtent = (R + r) + d;
+      return { x: xRaw / maxExtent * 0.99, y: yRaw / maxExtent * 0.99 };
+    },
+    cycleMs: 20000,
+    scale: 1.0
+  },
+  {
+    name: 'Coil',
+    // Many small loops - max extent is (R-r) + d = 0.94 + 0.5 = 1.44
+    fn: (u) => {
+      const t = u * Math.PI * 2 * 15;
+      const R = 1.0, r = 0.06, d = 0.5;
+      const xRaw = (R - r) * Math.cos(t) + d * Math.cos(((R - r) / r) * t);
+      const yRaw = (R - r) * Math.sin(t) - d * Math.sin(((R - r) / r) * t);
+      const maxExtent = (R - r) + d;
+      return { x: xRaw / maxExtent * 0.99, y: yRaw / maxExtent * 0.99 };
+    },
+    cycleMs: 150000,
+    scale: 1.0
+  },
+  {
+    name: 'Trifolium',
+    // 3-fold symmetry - max extent is (R-r) + d = 0.67 + 0.66 = 1.33
+    fn: (u) => {
+      const t = u * Math.PI * 2 * 3;
+      const R = 1.0, r = 0.33, d = 0.66;
+      const xRaw = (R - r) * Math.cos(t) + d * Math.cos(((R - r) / r) * t);
+      const yRaw = (R - r) * Math.sin(t) - d * Math.sin(((R - r) / r) * t);
+      const maxExtent = (R - r) + d;
+      return { x: xRaw / maxExtent * 0.99, y: yRaw / maxExtent * 0.99 };
+    },
+    cycleMs: 30000,
+    scale: 1.0
+  },
+  {
+    name: 'Astroid',
+    // 4-pointed hypocycloid
+    fn: (u) => {
+      const t = u * Math.PI * 2;
+      const c = Math.cos(t);
+      const s = Math.sin(t);
+      const x = c * c * c;
+      const y = s * s * s;
+      return { x: x * 0.99, y: y * 0.99 };
+    },
+    cycleMs: 20000,
+    scale: 1.0
+  },
+  {
+    name: 'Weave',
+    // Woven pattern - 8 points, 4-fold symmetry, large crossing loops
+    fn: (u) => {
+      const t = u * Math.PI * 2 * 8;
+      const R = 1.0, r = 1/8, d = 1.1;
+      const xRaw = (R - r) * Math.cos(t) + d * Math.cos(((R - r) / r) * t);
+      const yRaw = (R - r) * Math.sin(t) - d * Math.sin(((R - r) / r) * t);
+      const maxExtent = (R - r) + d;
+      return { x: xRaw / maxExtent * 0.99, y: yRaw / maxExtent * 0.99 };
+    },
+    cycleMs: 90000,
+    scale: 1.0
+  },
+  {
+    name: 'Infinity',
+    // Lemniscate - max x is 1, max y is ~0.5
+    // Scale y up to use full vertical space
+    fn: (u) => {
+      const t = u * Math.PI * 2;
+      const denom = 1 + Math.sin(t) * Math.sin(t);
+      const x = Math.cos(t) / denom;
+      const y = Math.sin(t) * Math.cos(t) / denom;
+      return { x: x * 0.99, y: y * 1.98 };
+    },
+    // Icon version: natural aspect ratio so rotation is visible
+    iconFn: (u) => {
+      const t = u * Math.PI * 2;
+      const denom = 1 + Math.sin(t) * Math.sin(t);
+      const x = Math.cos(t) / denom;
+      const y = Math.sin(t) * Math.cos(t) / denom;
+      return { x: x * 0.99, y: y * 0.99 };
+    },
+    cycleMs: 15000,
+    scale: 1.0
+  }
+];
+
+// Mode button hit regions (will be populated dynamically)
+const MODE_BUTTONS = PATTERNS.map((p, i) => ({ 
+  cx: 0, cy: 0, r: 0, mode: i + 1, label: p.name 
+}));
+
+// Melody mute button hit region
+const MELODY_BUTTON = { cx: 0, cy: 0, r: 0 };
+
+// Pattern icon cache - pre-rendered icons for performance
+let patternIconCache = null;  // Array of {active: canvas, inactive: canvas}
+let patternIconSize = 0;      // Size the icons were rendered at
+// Pattern icon resolution - must be high enough for all patterns including complex ones
+// Epitrochoid needs 7 inner rotations, Coil needs 15, etc.
+const PATTERN_ICON_RESOLUTION = 1500; // High enough for perfect representation of all patterns
+
+// Note: cachedCenterX/Y and cachedPadHalf reuse the trail cache variables above
+
+// Started flag
+let hasStarted = false;
+
+// Orientation tracking for trail reset
+let wasLandscape = window.innerWidth > window.innerHeight;
+
+// Melody mute toggle
+let melodyMuted = false;
+
+// BPM control (affects gesture notes and pattern duration)
+// 1.0 = default tempo, lower = slower/more contemplative, higher = faster
+let tempoMultiplier = 0.6;
+const TEMPO_MIN = 0.25;  // 4x slower
+const TEMPO_MAX = 2.0;   // 2x faster
+
+// Pause drawing while adjusting tempo
+let isTempoAdjusting = false;
+let tempoAdjustTimeout = null;
+
+// =======================================================
+// DRONE VOICES – Archetypal Sound Design
+// =======================================================
+// Each element is a HARMONIC SERIES built from stacked fifths:
+//
+// EARTH: C2 → G2 → D3 → A3 → E4  (rooted, fundamental)
+// WATER: G2 → D3 → A3 → E4 → B4  (flowing, one fifth up)
+// AIR:   D3 → A3 → E4 → B4 → F#5 (rising, expansive)
+// FIRE:  A3 → E4 → B4 → F#5→ C#6 (bright, transcendent)
+//
+// Adjacent elements share 4 of 5 tones = natural blending
+// The cycle ascends: Earth grounds, Water flows, Air rises, Fire transcends
+// Sharps emerge only in the upper registers of Air and Fire
+// =======================================================
+
+const DRONE_CONFIG = {
+  fire: {
+    // FIRE - A3 as root, stacked fifths ascending
+    // A3 → E4 → B4 → F#5 → C#6
+    // The highest, brightest, most transcendent
+    baseFreq: 220.00,       // A3 - root
+    secondFreq: 329.63,     // E4 - fifth
+    thirdFreq: 493.88,      // B4 - ninth (fifth of fifth)
+    fourthFreq: 739.99,     // F#5 - thirteenth
+    fifthFreq: 1108.73,     // C#6 - highest partial
+    color: [255, 95, 40],
+    waveform: 'sawtooth',
+    filterType: 'lowpass',
+    baseCutoff: 1200,
+    maxCutoff: 6000,
+    resonance: 3,
+    detuneRange: 25,
+    lfoRate: 0.18,
+    lfoDepth: 0.5,
+    attack: 1.5,
+    release: 3.0,
+  },
+  air: {
+    // AIR - D3 as root, stacked fifths ascending
+    // D3 → A3 → E4 → B4 → F#5
+    // Rising, intellectual, expansive
+    baseFreq: 146.83,       // D3 - root
+    secondFreq: 220.00,     // A3 - fifth (shared with Fire root)
+    thirdFreq: 329.63,      // E4 - ninth
+    fourthFreq: 493.88,     // B4 - thirteenth
+    fifthFreq: 739.99,      // F#5 - highest partial
+    color: [170, 200, 235],
+    waveform: 'sine',
+    filterType: 'highpass',
+    baseCutoff: 300,
+    maxCutoff: 120,
+    resonance: 0.5,
+    detuneRange: 12,
+    lfoRate: 0.07,
+    lfoDepth: 0.25,
+    attack: 4.5,
+    release: 6.0,
+  },
+  water: {
+    // WATER - G2 as root, stacked fifths ascending
+    // G2 → D3 → A3 → E4 → B4
+    // Flowing, emotional, middle depth
+    baseFreq: 98.00,        // G2 - root
+    secondFreq: 146.83,     // D3 - fifth (shared with Air root)
+    thirdFreq: 220.00,      // A3 - ninth
+    fourthFreq: 329.63,     // E4 - thirteenth
+    fifthFreq: 493.88,      // B4 - highest partial
+    color: [50, 130, 150],
+    waveform: 'sine',
+    filterType: 'lowpass',
+    baseCutoff: 450,
+    maxCutoff: 1600,
+    resonance: 7,
+    detuneRange: 10,
+    lfoRate: 0.03,
+    lfoDepth: 0.55,
+    attack: 5.5,
+    release: 8.0,
+  },
+  earth: {
+    // EARTH - C2 as root, stacked fifths ascending
+    // C2 → G2 → D3 → A3 → E4
+    // The deepest foundation, all natural tones
+    baseFreq: 65.41,        // C2 - root (the fundamental of all)
+    secondFreq: 98.00,      // G2 - fifth (shared with Water root)
+    thirdFreq: 146.83,      // D3 - ninth
+    fourthFreq: 220.00,     // A3 - thirteenth
+    fifthFreq: 329.63,      // E4 - highest partial
+    color: [130, 100, 70],
+    waveform: 'triangle',
+    filterType: 'lowpass',
+    baseCutoff: 200,
+    maxCutoff: 500,
+    resonance: 1.5,
+    detuneRange: 2,
+    lfoRate: 0.012,
+    lfoDepth: 0.08,
+    attack: 7.0,
+    release: 10.0,
+  }
+};
+
+// Active drone voices
+const drones = {};
+
+// =======================================================
+// CONVOLUTION REVERB (Algorithmic IR generation)
+// =======================================================
+class ConvolutionReverb {
+  constructor(ctx, options = {}) {
+    this.ctx = ctx;
+    this.input = ctx.createGain();
+    this.output = ctx.createGain();
+    this.output.gain.value = options.outputGain || 0.5;
+    
+    // Reverb parameters
+    this.duration = options.duration || 4.0;        // IR length in seconds
+    this.decay = options.decay || 2.5;              // Decay factor (higher = faster decay)
+    this.density = options.density || 0.8;          // Reflection density (0-1)
+    this.damping = options.damping || 0.6;          // High frequency damping (0-1)
+    this.preDelay = options.preDelay || 0.02;       // Pre-delay in seconds
+    this.stereoWidth = options.stereoWidth || 0.8;  // Stereo decorrelation (0-1)
+    
+    // Create convolver
+    this.convolver = ctx.createConvolver();
+    
+    // Pre-delay
+    this.preDelayNode = ctx.createDelay(0.1);
+    this.preDelayNode.delayTime.value = this.preDelay;
+    
+    // Input filter - remove some low end before reverb
+    this.inputFilter = ctx.createBiquadFilter();
+    this.inputFilter.type = 'highpass';
+    this.inputFilter.frequency.value = 180;
+    this.inputFilter.Q.value = 0.5;
+    
+    // Output filter - gentle high cut for warmth
+    this.outputFilter = ctx.createBiquadFilter();
+    this.outputFilter.type = 'lowpass';
+    this.outputFilter.frequency.value = 6000;
+    this.outputFilter.Q.value = 0.5;
+    
+    // Connect
+    this.input.connect(this.inputFilter);
+    this.inputFilter.connect(this.preDelayNode);
+    this.preDelayNode.connect(this.convolver);
+    this.convolver.connect(this.outputFilter);
+    this.outputFilter.connect(this.output);
+    
+    // Generate the impulse response
+    this.generateIR();
+  }
+  
+  generateIR() {
+    const sampleRate = this.ctx.sampleRate;
+    const length = Math.floor(sampleRate * this.duration);
+    
+    // Create stereo buffer
+    const buffer = this.ctx.createBuffer(2, length, sampleRate);
+    const leftChannel = buffer.getChannelData(0);
+    const rightChannel = buffer.getChannelData(1);
+    
+    // Generate noise-based IR with decay and damping
+    for (let i = 0; i < length; i++) {
+      const t = i / sampleRate;  // Time in seconds
+      const progress = i / length;  // 0 to 1
+      
+      // Exponential decay envelope
+      const envelope = Math.exp(-t * this.decay);
+      
+      // High frequency damping (increases over time)
+      // We simulate this by reducing high-frequency content as we progress
+      const dampingFactor = 1 - (this.damping * progress);
+      
+      // Density: skip some samples for sparser reflections at start
+      const densityThreshold = this.density * (0.3 + 0.7 * progress);
+      
+      // Generate decorrelated noise for L/R
+      let noiseL = 0;
+      let noiseR = 0;
+      
+      if (Math.random() < densityThreshold) {
+        // Base noise
+        noiseL = (Math.random() * 2 - 1);
+        noiseR = (Math.random() * 2 - 1);
+        
+        // Apply simple lowpass for damping (moving average simulation)
+        if (i > 0) {
+          const lpAmount = 1 - dampingFactor;
+          noiseL = noiseL * dampingFactor + leftChannel[i - 1] * lpAmount * 0.5;
+          noiseR = noiseR * dampingFactor + rightChannel[i - 1] * lpAmount * 0.5;
+        }
+        
+        // Stereo width: blend L/R based on stereoWidth
+        const mid = (noiseL + noiseR) * 0.5;
+        const side = (noiseL - noiseR) * 0.5;
+        noiseL = mid + side * this.stereoWidth;
+        noiseR = mid - side * this.stereoWidth;
+      }
+      
+      // Apply envelope
+      leftChannel[i] = noiseL * envelope;
+      rightChannel[i] = noiseR * envelope;
+    }
+    
+    // Add some early reflections (discrete echoes in first 80ms)
+    const earlyReflections = [
+      { time: 0.012, gain: 0.7 },
+      { time: 0.019, gain: 0.5 },
+      { time: 0.028, gain: 0.4 },
+      { time: 0.037, gain: 0.35 },
+      { time: 0.048, gain: 0.3 },
+      { time: 0.063, gain: 0.25 },
+      { time: 0.079, gain: 0.2 },
+    ];
+    
+    earlyReflections.forEach(ref => {
+      const sampleIndex = Math.floor(ref.time * sampleRate);
+      if (sampleIndex < length) {
+        // Add a small burst for each early reflection
+        const burstLength = Math.floor(0.003 * sampleRate); // 3ms burst
+        for (let j = 0; j < burstLength && sampleIndex + j < length; j++) {
+          const burstEnv = Math.exp(-j / (burstLength * 0.3));
+          const noise = (Math.random() * 2 - 1) * ref.gain * burstEnv;
+          leftChannel[sampleIndex + j] += noise * (0.8 + Math.random() * 0.4);
+          rightChannel[sampleIndex + j] += noise * (0.8 + Math.random() * 0.4);
+        }
+      }
+    });
+    
+    // Normalize the buffer to prevent clipping
+    let maxSample = 0;
+    for (let i = 0; i < length; i++) {
+      maxSample = Math.max(maxSample, Math.abs(leftChannel[i]), Math.abs(rightChannel[i]));
+    }
+    if (maxSample > 0) {
+      const normalizeGain = 0.9 / maxSample;
+      for (let i = 0; i < length; i++) {
+        leftChannel[i] *= normalizeGain;
+        rightChannel[i] *= normalizeGain;
+      }
+    }
+    
+    this.convolver.buffer = buffer;
+  }
+  
+  // Method to regenerate IR with new parameters
+  setParameters(options) {
+    if (options.duration !== undefined) this.duration = options.duration;
+    if (options.decay !== undefined) this.decay = options.decay;
+    if (options.density !== undefined) this.density = options.density;
+    if (options.damping !== undefined) this.damping = options.damping;
+    if (options.stereoWidth !== undefined) this.stereoWidth = options.stereoWidth;
+    if (options.preDelay !== undefined) {
+      this.preDelay = options.preDelay;
+      this.preDelayNode.delayTime.value = this.preDelay;
+    }
+    if (options.outputGain !== undefined) {
+      this.output.gain.value = options.outputGain;
+    }
+    this.generateIR();
+  }
+}
+
+// =======================================================
+// DRONE VOICE CLASS - Stacked Fifths Overtone Series
+// =======================================================
+class DroneVoice {
+  constructor(ctx, config, masterOut, reverbSend, elementName) {
+    this.ctx = ctx;
+    this.config = config;
+    this.elementName = elementName;
+    this.isPlaying = false;
+    this.targetGain = 0;
+    this.currentGain = 0;
+    
+    // === FIVE OSCILLATORS: Stacked fifths overtone series ===
+    // Each successive fifth is quieter (natural overtone falloff)
+    
+    // 1st partial - ROOT (loudest)
+    this.osc1 = ctx.createOscillator();
+    this.osc1.type = config.waveform;
+    this.osc1.frequency.value = config.baseFreq;
+    this.osc1Gain = ctx.createGain();
+    this.osc1Gain.gain.value = 1.0;
+    
+    // 2nd partial - FIFTH
+    this.osc2 = ctx.createOscillator();
+    this.osc2.type = config.waveform === 'sawtooth' ? 'sawtooth' : 'sine';
+    this.osc2.frequency.value = config.secondFreq;
+    this.osc2.detune.value = config.detuneRange * 0.3;
+    this.osc2Gain = ctx.createGain();
+    this.osc2Gain.gain.value = 0.6;
+    
+    // 3rd partial - NINTH (fifth of fifth)
+    this.osc3 = ctx.createOscillator();
+    this.osc3.type = 'sine';
+    this.osc3.frequency.value = config.thirdFreq;
+    this.osc3.detune.value = -config.detuneRange * 0.2;
+    this.osc3Gain = ctx.createGain();
+    this.osc3Gain.gain.value = 0.35;
+    
+    // 4th partial - THIRTEENTH
+    this.osc4 = ctx.createOscillator();
+    this.osc4.type = 'sine';
+    this.osc4.frequency.value = config.fourthFreq;
+    this.osc4.detune.value = config.detuneRange * 0.15;
+    this.osc4Gain = ctx.createGain();
+    this.osc4Gain.gain.value = 0.2;
+    
+    // 5th partial - HIGHEST (quietest, adds shimmer)
+    this.osc5 = ctx.createOscillator();
+    this.osc5.type = 'sine';
+    this.osc5.frequency.value = config.fifthFreq;
+    this.osc5Gain = ctx.createGain();
+    this.osc5Gain.gain.value = 0.1;
+    
+    // === NOISE LAYER for AIR ===
+    this.noiseNode = null;
+    this.noiseFilter = null;
+    this.noiseGain = null;
+    this.noiseLfo = null;
+    this.noiseLfoGain = null;
+    
+    if (elementName === 'air') {
+      const bufferSize = ctx.sampleRate * 2;
+      const noiseBuffer = ctx.createBuffer(2, bufferSize, ctx.sampleRate);
+      for (let ch = 0; ch < 2; ch++) {
+        const data = noiseBuffer.getChannelData(ch);
+        for (let i = 0; i < bufferSize; i++) {
+          data[i] = Math.random() * 2 - 1;
+        }
+      }
+      
+      this.noiseNode = ctx.createBufferSource();
+      this.noiseNode.buffer = noiseBuffer;
+      this.noiseNode.loop = true;
+      
+      this.noiseFilter = ctx.createBiquadFilter();
+      this.noiseFilter.type = 'bandpass';
+      this.noiseFilter.frequency.value = 2500;
+      this.noiseFilter.Q.value = 0.8;
+      
+      this.noiseFilterHigh = ctx.createBiquadFilter();
+      this.noiseFilterHigh.type = 'highpass';
+      this.noiseFilterHigh.frequency.value = 3000;
+      this.noiseFilterHigh.Q.value = 0.5;
+      
+      this.noiseGain = ctx.createGain();
+      this.noiseGain.gain.value = 0;
+      
+      this.noiseLfo = ctx.createOscillator();
+      this.noiseLfo.type = 'sine';
+      this.noiseLfo.frequency.value = 0.08;
+      
+      this.noiseLfoGain = ctx.createGain();
+      this.noiseLfoGain.gain.value = 800;
+      
+      this.noiseAmpLfo = ctx.createOscillator();
+      this.noiseAmpLfo.type = 'sine';
+      this.noiseAmpLfo.frequency.value = 0.12;
+      
+      this.noiseAmpLfoGain = ctx.createGain();
+      this.noiseAmpLfoGain.gain.value = 0;
+      
+      this.noiseLfo.connect(this.noiseLfoGain);
+      this.noiseLfoGain.connect(this.noiseFilter.frequency);
+      
+      this.noiseAmpLfo.connect(this.noiseAmpLfoGain);
+      this.noiseAmpLfoGain.connect(this.noiseGain.gain);
+      
+      this.noiseNode.connect(this.noiseFilter);
+      this.noiseFilter.connect(this.noiseFilterHigh);
+      this.noiseFilterHigh.connect(this.noiseGain);
+    }
+    
+    // LFO for filter modulation
+    this.lfo = ctx.createOscillator();
+    this.lfo.type = 'sine';
+    this.lfo.frequency.value = config.lfoRate;
+    
+    this.lfoGain = ctx.createGain();
+    this.lfoGain.gain.value = 0;
+    
+    // === RHYTHMIC PULSE LFO - Deep breathing rhythm per element ===
+    // Earth: very slow, deep throb (tectonic breathing)
+    // Water: gentle wave rhythm (tidal pulse)
+    // Air: irregular, breathy (wind gusts) - uses triangle for softer peaks
+    // Fire: faster, restless (flickering heartbeat)
+    
+    this.pulseLfo = ctx.createOscillator();
+    this.pulseGain = ctx.createGain();
+    
+    if (elementName === 'earth') {
+      // Earth: very slow, deep, steady - like tectonic breathing
+      this.pulseLfo.type = 'sine';
+      this.pulseLfo.frequency.value = 0.08; // ~12 second cycle
+      this.pulseDepth = 0.25; // 25% amplitude variation
+    } else if (elementName === 'water') {
+      // Water: gentle wave rhythm - tidal ebb and flow
+      this.pulseLfo.type = 'sine';
+      this.pulseLfo.frequency.value = 0.15; // ~7 second cycle
+      this.pulseDepth = 0.20; // 20% amplitude variation
+    } else if (elementName === 'air') {
+      // Air: slightly irregular, breathy - like wind gusts
+      this.pulseLfo.type = 'triangle'; // Softer peaks
+      this.pulseLfo.frequency.value = 0.22; // ~4.5 second cycle
+      this.pulseDepth = 0.18; // 18% amplitude variation
+    } else if (elementName === 'fire') {
+      // Fire: faster, more restless - flickering (increased to compensate for removed tremolo)
+      this.pulseLfo.type = 'sine';
+      this.pulseLfo.frequency.value = 0.5; // ~2 second cycle (was 0.35)
+      this.pulseDepth = 0.28; // 28% amplitude variation (was 0.22)
+    }
+    
+    // Pulse gain starts at 0, scaled by weight
+    this.pulseGain.gain.value = 0;
+    
+    // === PITCH MODULATION LFO - Element-specific character ===
+    // Earth: almost none (stable)
+    // Water: slow gentle drift (tidal)
+    // Air: moderate gentle movement (breeze)
+    // Fire: faster unstable wobble (flickering)
+    
+    this.pitchLfo = ctx.createOscillator();
+    this.pitchLfo.type = 'sine';
+    
+    this.pitchLfoGain = ctx.createGain();
+    
+    if (elementName === 'earth') {
+      // Earth: extremely slow, barely perceptible - geological stability
+      this.pitchLfo.frequency.value = 0.02;
+      this.pitchLfoGain.gain.value = 1; // Just 1 cent of drift
+    } else if (elementName === 'water') {
+      // Water: slow tidal drift - emotional, flowing
+      this.pitchLfo.frequency.value = 0.04;
+      this.pitchLfoGain.gain.value = 6; // Gentle pitch waves
+    } else if (elementName === 'air') {
+      // Air: moderate breeze-like movement
+      this.pitchLfo.frequency.value = 0.08;
+      this.pitchLfoGain.gain.value = 8; // Airy drift
+    } else if (elementName === 'fire') {
+      // Fire: faster flickering instability
+      this.pitchLfo.frequency.value = 0.25;
+      this.pitchLfoGain.gain.value = 15; // Noticeable wobble
+    }
+    
+    // Connect pitch LFO to all oscillator detunes
+    this.pitchLfo.connect(this.pitchLfoGain);
+    this.pitchLfoGain.connect(this.osc1.detune);
+    this.pitchLfoGain.connect(this.osc2.detune);
+    this.pitchLfoGain.connect(this.osc3.detune);
+    this.pitchLfoGain.connect(this.osc4.detune);
+    this.pitchLfoGain.connect(this.osc5.detune);
+    
+    // Main Filter
+    this.filter = ctx.createBiquadFilter();
+    this.filter.type = config.filterType;
+    this.filter.frequency.value = config.baseCutoff;
+    this.filter.Q.value = config.resonance;
+    
+    // === RESONANT FILTER tuned to pentatonic scale ===
+    // This filter "sings" at frequencies from the element's scale
+    // Creating vowel-like formants that reinforce the harmonic identity
+    this.resonantFilter = ctx.createBiquadFilter();
+    this.resonantFilter.type = 'peaking';
+    this.resonantFilter.Q.value = 4; // Moderate resonance
+    this.resonantFilter.gain.value = 3; // Subtle boost
+    
+    // Define resonant frequencies for each element (pentatonic scale tones)
+    this.resonantFreqs = {
+      earth: [130.81, 146.83, 164.81, 196.00, 220.00],  // C3, D3, E3, G3, A3
+      water: [196.00, 220.00, 246.94, 293.66, 329.63],  // G3, A3, B3, D4, E4
+      air: [293.66, 329.63, 369.99, 440.00, 493.88],    // D4, E4, F#4, A4, B4
+      fire: [440.00, 493.88, 554.37, 659.26, 739.99]    // A4, B4, C#5, E5, F#5
+    }[elementName];
+    
+    // Start at root frequency
+    this.resonantFilter.frequency.value = this.resonantFreqs[0];
+    this.currentResonantIndex = 0;
+    
+    // Slowly step through scale tones (different rate per element)
+    this.resonantStepRate = {
+      earth: 8000,   // Very slow - geological
+      water: 5000,   // Slow - tidal
+      air: 3000,     // Moderate - breezy
+      fire: 2000     // Faster - flickering
+    }[elementName];
+    
+    this.resonantInterval = null;
+    
+    // Pre-filter mixer (all oscillators sum here)
+    this.preMix = ctx.createGain();
+    this.preMix.gain.value = 1;
+    
+    // Amplitude envelope
+    this.ampGain = ctx.createGain();
+    this.ampGain.gain.value = 0;
+    
+    // Pulse destination (breathing rhythm)
+    this.pulseNode = ctx.createGain();
+    this.pulseNode.gain.value = 1;
+    
+    // Reverb send
+    this.reverbSendGain = ctx.createGain();
+    const reverbAmount = (elementName === 'water') ? 0.66 : 
+                         (elementName === 'air') ? 0.50 : 
+                         (elementName === 'earth') ? 0.33 : 0.25;
+    this.reverbSendGain.gain.value = reverbAmount;
+    
+    // === CONNECTIONS ===
+    
+    // Filter LFO
+    this.lfo.connect(this.lfoGain);
+    this.lfoGain.connect(this.filter.frequency);
+    
+    // Pulse LFO (breathing)
+    this.pulseLfo.connect(this.pulseGain);
+    this.pulseGain.connect(this.pulseNode.gain);
+    
+    // All 5 partials → pre-mix
+    this.osc1.connect(this.osc1Gain);
+    this.osc1Gain.connect(this.preMix);
+    
+    this.osc2.connect(this.osc2Gain);
+    this.osc2Gain.connect(this.preMix);
+    
+    this.osc3.connect(this.osc3Gain);
+    this.osc3Gain.connect(this.preMix);
+    
+    this.osc4.connect(this.osc4Gain);
+    this.osc4Gain.connect(this.preMix);
+    
+    this.osc5.connect(this.osc5Gain);
+    this.osc5Gain.connect(this.preMix);
+    
+    // Pre-mix → filter → resonant filter → amp → pulse → output
+    this.preMix.connect(this.filter);
+    this.filter.connect(this.resonantFilter);
+    this.resonantFilter.connect(this.ampGain);
+    this.ampGain.connect(this.pulseNode);
+    this.pulseNode.connect(masterOut);
+    this.pulseNode.connect(this.reverbSendGain);
+    this.reverbSendGain.connect(reverbSend);
+    
+    // Air's noise layer (connects before pulse so it also breathes)
+    if (elementName === 'air' && this.noiseGain) {
+      this.noiseGain.connect(this.pulseNode);
+    }
+  }
+  
+  start() {
+    if (this.isPlaying) return;
+    const now = this.ctx.currentTime;
+    this.osc1.start(now);
+    this.osc2.start(now);
+    this.osc3.start(now);
+    this.osc4.start(now);
+    this.osc5.start(now);
+    this.lfo.start(now);
+    this.pulseLfo.start(now);
+    this.pitchLfo.start(now);
+    
+    if (this.elementName === 'air') {
+      if (this.noiseNode) this.noiseNode.start(now);
+      if (this.noiseLfo) this.noiseLfo.start(now);
+      if (this.noiseAmpLfo) this.noiseAmpLfo.start(now);
+    }
+    
+    this.isPlaying = true;
+  }
+  
+  // Step resonant filter to next scale tone (called by global scheduler)
+  stepResonantFilter() {
+    // Only step if we have audible weight
+    if (this.targetGain < 0.1) return;
+    
+    // Move to next scale tone (with slight randomness for organic feel)
+    if (Math.random() < 0.7) {
+      // Usually step forward
+      this.currentResonantIndex = (this.currentResonantIndex + 1) % this.resonantFreqs.length;
+    } else {
+      // Sometimes jump randomly
+      this.currentResonantIndex = Math.floor(Math.random() * this.resonantFreqs.length);
+    }
+    
+    const targetFreq = this.resonantFreqs[this.currentResonantIndex];
+    const now = this.ctx.currentTime;
+    
+    // Smooth glide to new frequency
+    this.resonantFilter.frequency.cancelScheduledValues(now);
+    this.resonantFilter.frequency.setTargetAtTime(targetFreq, now, 0.5);
+  }
+  
+  setWeight(weight, transitionTime = 0.5) {
+    // Safety: clamp weight and ensure it's a valid number
+    weight = Math.max(0, Math.min(1, weight || 0));
+    if (!isFinite(weight)) weight = 0;
+    
+    this.targetGain = weight;
+    const now = this.ctx.currentTime;
+    const config = this.config;
+    
+    // Amplitude (with very slow attack/release for pad feel)
+    const targetAmp = Math.pow(weight, 0.7) * 0.15; // Soft curve, keep overall quiet
+    if (isFinite(targetAmp)) {
+      this.ampGain.gain.cancelScheduledValues(now);
+      this.ampGain.gain.setTargetAtTime(Math.max(0, targetAmp), now, transitionTime);
+    }
+    
+    // Filter cutoff follows weight
+    const cutoff = config.baseCutoff + (config.maxCutoff - config.baseCutoff) * weight;
+    if (isFinite(cutoff)) {
+      this.filter.frequency.cancelScheduledValues(now);
+      this.filter.frequency.setTargetAtTime(Math.max(20, cutoff), now, transitionTime * 0.8);
+    }
+    
+    // LFO depth scales with weight
+    const lfoAmount = (config.maxCutoff - config.baseCutoff) * config.lfoDepth * weight;
+    if (isFinite(lfoAmount)) {
+      this.lfoGain.gain.cancelScheduledValues(now);
+      this.lfoGain.gain.setTargetAtTime(Math.max(0, lfoAmount), now, transitionTime);
+    }
+    
+    // Subtle detune modulation
+    const detuneVal = config.detuneRange * (0.5 + weight * 0.5);
+    if (isFinite(detuneVal)) {
+      this.osc2.detune.cancelScheduledValues(now);
+      this.osc2.detune.setTargetAtTime(detuneVal, now, transitionTime);
+      // Osc3 gets opposite detune for wider stereo/chorus
+      this.osc3.detune.cancelScheduledValues(now);
+      this.osc3.detune.setTargetAtTime(-detuneVal * 0.7, now, transitionTime);
+    }
+    
+    // Rhythmic pulse depth - deeper when more in this element
+    const pulseAmount = this.pulseDepth * weight;
+    if (isFinite(pulseAmount)) {
+      this.pulseGain.gain.cancelScheduledValues(now);
+      this.pulseGain.gain.setTargetAtTime(pulseAmount, now, transitionTime);
+    }
+    
+    // Resonant filter gain - more prominent when deeper in element
+    const resonantGain = 2 + weight * 4; // Range from 2 to 6 dB boost
+    if (isFinite(resonantGain)) {
+      this.resonantFilter.gain.cancelScheduledValues(now);
+      this.resonantFilter.gain.setTargetAtTime(resonantGain, now, transitionTime);
+    }
+    
+    // Air's wind noise layer
+    if (this.elementName === 'air' && this.noiseGain) {
+      const noiseLevel = weight * 0.12; // Breathy wind noise
+      const noiseAmpMod = weight * 0.04; // Wind gusts amplitude modulation
+      
+      this.noiseGain.gain.cancelScheduledValues(now);
+      this.noiseGain.gain.setTargetAtTime(noiseLevel, now, transitionTime);
+      
+      if (this.noiseAmpLfoGain) {
+        this.noiseAmpLfoGain.gain.cancelScheduledValues(now);
+        this.noiseAmpLfoGain.gain.setTargetAtTime(noiseAmpMod, now, transitionTime);
+      }
+    }
+  }
+}
+
+// =======================================================
+// CONSOLIDATED RESONANT STEPPER - One timer for all drones
+// =======================================================
+let resonantStepperInterval = null;
+
+function startResonantStepper() {
+  if (resonantStepperInterval) return;
+  
+  // Step all drones' resonant filters at a unified rate
+  // Each drone will only actually step if it has audible weight
+  resonantStepperInterval = setInterval(() => {
+    for (const drone of Object.values(drones)) {
+      // Add some randomness per drone so they don't all step at exactly the same time
+      if (Math.random() < 0.4) {
+        drone.stepResonantFilter();
+      }
+    }
+  }, 2000); // Check every 2 seconds, randomness creates variation
+}
+
+// =======================================================
+// PEDAL TONE - Shifting tonal gravity based on dominant element
+// =======================================================
+// A deep bass note that follows the dominant element's root,
+// creating a sense of "home" that shifts as you move through space
+
+const PEDAL_ROOTS = {
+  earth: 32.70,   // C1 - deepest, most grounded
+  water: 49.00,   // G1 - fifth above Earth
+  air: 73.42,     // D2 - fifth above Water  
+  fire: 55.00     // A1 - fifth above Air (completes the cycle)
+};
+
+let pedalOsc = null;
+let pedalOsc2 = null;     // Octave above for richness
+let pedalGain = null;
+let pedalFilter = null;
+let pedalCurrentFreq = PEDAL_ROOTS.earth;
+
+function initPedalTone() {
+  if (!audioCtx) return;
+  
+  // Main pedal oscillator - deep sine
+  pedalOsc = audioCtx.createOscillator();
+  pedalOsc.type = 'sine';
+  pedalOsc.frequency.value = pedalCurrentFreq;
+  
+  // Second oscillator - octave above, quieter, for richness
+  pedalOsc2 = audioCtx.createOscillator();
+  pedalOsc2.type = 'sine';
+  pedalOsc2.frequency.value = pedalCurrentFreq * 2;
+  
+  // Gentle lowpass to keep it subby
+  pedalFilter = audioCtx.createBiquadFilter();
+  pedalFilter.type = 'lowpass';
+  pedalFilter.frequency.value = 150;
+  pedalFilter.Q.value = 1;
+  
+  // Gain control - starts silent
+  pedalGain = audioCtx.createGain();
+  pedalGain.gain.value = 0;
+  
+  // Mixer for the two oscillators
+  const pedalMixer = audioCtx.createGain();
+  pedalMixer.gain.value = 1;
+  
+  const pedalOsc2Gain = audioCtx.createGain();
+  pedalOsc2Gain.gain.value = 0.3; // Octave is quieter
+  
+  // Connect
+  pedalOsc.connect(pedalMixer);
+  pedalOsc2.connect(pedalOsc2Gain);
+  pedalOsc2Gain.connect(pedalMixer);
+  pedalMixer.connect(pedalFilter);
+  pedalFilter.connect(pedalGain);
+  pedalGain.connect(masterGain);
+  
+  // Also send to reverb for depth
+  const pedalReverb = audioCtx.createGain();
+  pedalReverb.gain.value = 0.3;
+  pedalGain.connect(pedalReverb);
+  pedalReverb.connect(reverbNode.input);
+  
+  // Start oscillators
+  const now = audioCtx.currentTime;
+  pedalOsc.start(now);
+  pedalOsc2.start(now);
+}
+
+function updatePedalTone(weights) {
+  if (!audioCtx || !pedalOsc || !pedalGain) return;
+  
+  const now = audioCtx.currentTime;
+  
+  // Calculate target frequency as weighted average of roots
+  let targetFreq = 0;
+  let maxWeight = 0;
+  let dominantElement = 'earth';
+  
+  for (const [element, weight] of Object.entries(weights)) {
+    targetFreq += PEDAL_ROOTS[element] * weight;
+    if (weight > maxWeight) {
+      maxWeight = weight;
+      dominantElement = element;
+    }
+  }
+  
+  // Smooth frequency transition (very slow for deep bass - avoids clicks)
+  if (Math.abs(targetFreq - pedalCurrentFreq) > 0.5) {
+    pedalOsc.frequency.setTargetAtTime(targetFreq, now, 2.0);
+    pedalOsc2.frequency.setTargetAtTime(targetFreq * 2, now, 2.0);
+    pedalCurrentFreq = targetFreq;
+  }
+  
+  // Pedal volume based on how "centered" we are on any element
+  // Louder when deeply in one element, quieter when between
+  const centeredness = Math.pow(maxWeight, 1.5); // Emphasize dominance
+  const targetGain = centeredness * 0.25; // Max 25% of master
+  
+  pedalGain.gain.setTargetAtTime(targetGain, now, 0.5);
+  
+  // Filter opens slightly when in Fire/Air (brighter), closes in Earth/Water (darker)
+  const brightness = weights.fire * 0.4 + weights.air * 0.3 + weights.water * 0.15 + weights.earth * 0.1;
+  const filterFreq = 80 + brightness * 150; // 80-230 Hz range
+  pedalFilter.frequency.setTargetAtTime(filterFreq, now, 0.3);
+}
+
+// =======================================================
+// GRANULAR TEXTURE LAYER - Pitched to Pentatonic Scales
+// =======================================================
+// Each element's grains play notes from its pentatonic scale
+// (stacked fifths from root)
+
+const PENTATONIC_SCALES = {
+  // Earth: C major pentatonic (C, D, E, G, A) - multiple octaves
+  earth: [65.41, 73.42, 82.41, 98.00, 110.00, 130.81, 146.83, 164.81, 196.00, 220.00],
+  // Water: G major pentatonic (G, A, B, D, E) - multiple octaves
+  water: [98.00, 110.00, 123.47, 146.83, 164.81, 196.00, 220.00, 246.94, 293.66, 329.63],
+  // Air: D major pentatonic (D, E, F#, A, B) - multiple octaves
+  air: [146.83, 164.81, 185.00, 220.00, 246.94, 293.66, 329.63, 369.99, 440.00, 493.88],
+  // Fire: A major pentatonic (A, B, C#, E, F#) - multiple octaves
+  fire: [220.00, 246.94, 277.18, 329.63, 369.99, 440.00, 493.88, 554.37, 659.26, 739.99]
+};
+
+// Grain spawner for subtle pitched texture
+let grainInterval = null;
+
+function spawnPitchedGrain(weight, element) {
+  if (!audioCtx || weight < 0.15) return;
+  
+  const config = DRONE_CONFIG[element];
+  const scale = PENTATONIC_SCALES[element];
+  const now = audioCtx.currentTime;
+  
+  // Pick a random note from the element's pentatonic scale
+  const freq = scale[Math.floor(Math.random() * scale.length)];
+  
+  // Element-specific grain characteristics
+  let grainDur, attackRatio, releaseRatio, panWidth;
+  
+  if (element === 'earth') {
+    // Earth: long, overlapping grains - dense, thick texture
+    grainDur = 0.8 + Math.random() * 1.2;
+    attackRatio = 0.4;
+    releaseRatio = 0.5;
+    panWidth = 0.3; // Narrow - grounded, centered
+  } else if (element === 'water') {
+    // Water: medium, flowing grains - continuous stream
+    grainDur = 0.5 + Math.random() * 0.8;
+    attackRatio = 0.3;
+    releaseRatio = 0.6;
+    panWidth = 0.5; // Medium spread
+  } else if (element === 'air') {
+    // Air: short, separated grains - sparse, open
+    grainDur = 0.2 + Math.random() * 0.4;
+    attackRatio = 0.2;
+    releaseRatio = 0.7;
+    panWidth = 0.8; // Wide - spacious, diffuse
+  } else if (element === 'fire') {
+    // Fire: very short, sharp grains - sparks, crackles
+    grainDur = 0.1 + Math.random() * 0.25;
+    attackRatio = 0.1;
+    releaseRatio = 0.8;
+    panWidth = 0.6; // Medium-wide - dancing sparks
+  }
+  
+  // Create a simple sine oscillator grain
+  const osc = audioCtx.createOscillator();
+  osc.type = element === 'fire' ? 'triangle' : 'sine';
+  osc.frequency.value = freq;
+  // Subtle random detune for organic feel
+  osc.detune.value = (Math.random() * 10 - 5);
+  
+  // Amplitude envelope - element-specific shape
+  const amp = audioCtx.createGain();
+  const peakGain = weight * 0.012 * (0.4 + Math.random() * 0.4);
+  
+  const attackTime = grainDur * attackRatio;
+  const releaseStart = grainDur * (1 - releaseRatio);
+  
+  amp.gain.setValueAtTime(0, now);
+  amp.gain.linearRampToValueAtTime(peakGain, now + attackTime);
+  amp.gain.linearRampToValueAtTime(peakGain * 0.6, now + releaseStart);
+  amp.gain.linearRampToValueAtTime(0, now + grainDur);
+  
+  // Stereo placement - element-specific width
+  const pan = audioCtx.createStereoPanner();
+  pan.pan.value = (Math.random() * 2 - 1) * panWidth;
+  
+  // Connect (filter removed - sine waves don't need it)
+  osc.connect(amp);
+  amp.connect(pan);
+  pan.connect(masterGain);
+  pan.connect(reverbNode.input);
+  
+  // Play
+  osc.start(now);
+  osc.stop(now + grainDur + 0.1);
+}
+
+// Textural density characteristics per element
+const DENSITY_CONFIG = {
+  earth: { 
+    spawnChance: 0.5,    // High chance - dense texture
+    interval: 300,       // Fast spawning
+    grainsPerSpawn: 1    // Single grains (was 2, optimized)
+  },
+  water: { 
+    spawnChance: 0.4,    // Medium-high - flowing continuous
+    interval: 400,       // Medium
+    grainsPerSpawn: 1
+  },
+  air: { 
+    spawnChance: 0.2,    // Low - sparse, open
+    interval: 600,       // Slower
+    grainsPerSpawn: 1
+  },
+  fire: { 
+    spawnChance: 0.45,   // High - active, many events
+    interval: 250,       // Very fast
+    grainsPerSpawn: 1    // But single grains (sparks)
+  }
+};
+
+function startGrainScheduler() {
+  if (grainInterval) return;
+  
+  // Use a faster base interval, with density controlled by spawn logic
+  grainInterval = setInterval(() => {
+    const weights = getElementWeights(currentX, currentY);
+    
+    // Calculate weighted density parameters
+    let totalSpawnChance = 0;
+    let totalGrains = 0;
+    
+    for (const [element, weight] of Object.entries(weights)) {
+      if (weight < 0.1) continue;
+      
+      const config = DENSITY_CONFIG[element];
+      
+      // Spawn chance scales with weight AND element's base density
+      const elementChance = weight * config.spawnChance;
+      
+      if (Math.random() < elementChance) {
+        // Spawn grains based on element's density character
+        const grainCount = config.grainsPerSpawn;
+        for (let i = 0; i < grainCount; i++) {
+          // Slight delay between multiple grains for natural feel
+          setTimeout(() => {
+            spawnPitchedGrain(weight, element);
+          }, i * 50);
+        }
+      }
+    }
+  }, 300); // Optimized interval (was 200ms) - density controlled by spawn chances
+}
+
+// =======================================================
+// SYMPATHETIC RESONANCE - REMOVED (made pad positions too homogeneous)
+// =======================================================
+
+
+// =======================================================
+// GESTURAL PHRASES - Musical shapes that follow movement
+// =======================================================
+// The "lead voice" that responds to HOW you move:
+// - Direction (up/down/left/right) determines phrase contour
+// - Speed determines note density and intensity
+// - Position determines which scale to use
+//
+// SCALE LOGIC: Pure pentatonic from stacked fifths
+// Each element's 5 notes span multiple octaves
+
+// Movement tracking for gestures
+let gestureLastX = 0;
+let gestureLastY = 0;
+let gestureAccumulatorX = 0;
+let gestureAccumulatorY = 0;
+let lastGestureTime = 0;
+let isGesturePlaying = false;
+
+// Pure pentatonic scales for gestures - actual frequencies across 3 octaves
+// Built from stacked fifths, consistent with our harmonic system
+const GESTURE_SCALES = {
+  // Earth: C pentatonic (C, D, E, G, A) - grounded, mid-low
+  // Removed lowest octave for clarity and better pan balance
+  earth: [
+    130.81, 146.83, 164.81, 196.00, 220.00, // Octave 3: C, D, E, G, A
+    261.63, 293.66, 329.63, 392.00, 440.00, // Octave 4: C, D, E, G, A
+    523.25, 587.33, 659.26, 783.99, 880.00  // Octave 5: C, D, E, G, A
+  ],
+  // Water: G pentatonic (G, A, B, D, E) - flowing, mid
+  water: [
+    196.00, 220.00, 246.94, 293.66, 329.63, // Octave 3-4: G, A, B, D, E
+    392.00, 440.00, 493.88, 587.33, 659.26, // Octave 4-5: G, A, B, D, E
+    783.99, 880.00, 987.77, 1174.66, 1318.51 // Octave 5-6: G, A, B, D, E
+  ],
+  // Air: D pentatonic (D, E, F#, A, B) - light, mid-high
+  air: [
+    293.66, 329.63, 369.99, 440.00, 493.88, // Octave 4: D, E, F#, A, B
+    587.33, 659.26, 739.99, 880.00, 987.77, // Octave 5: D, E, F#, A, B
+    1174.66, 1318.51, 1479.98, 1760.00, 1975.53 // Octave 6: D, E, F#, A, B
+  ],
+  // Fire: A pentatonic (A, B, C#, E, F#) - bright, high
+  fire: [
+    440.00, 493.88, 554.37, 659.26, 739.99, // Octave 4-5: A, B, C#, E, F#
+    880.00, 987.77, 1108.73, 1318.51, 1479.98, // Octave 5-6: A, B, C#, E, F#
+    1760.00, 1975.53, 2217.46, 2637.02, 2959.96 // Octave 6-7: A, B, C#, E, F#
+  ]
+};
+
+// Phrase patterns as SCALE INDICES (0-14 for 3 octaves of pentatonic)
+const PHRASE_PATTERNS = {
+  // Rising phrases
+  rising: [0, 1, 2, 3, 4, 5, 6, 7],           // Stepwise ascent
+  risingSkip: [0, 2, 4, 6, 8, 10],            // Skipping up (thirds)
+  risingArp: [0, 2, 4, 7, 9, 12],             // Arpeggio up (root-3rd-5th pattern)
+  
+  // Falling phrases  
+  falling: [9, 8, 7, 6, 5, 4, 3, 2],          // Stepwise descent
+  fallingSkip: [12, 10, 8, 6, 4, 2, 0],       // Skipping down
+  fallingArp: [12, 9, 7, 4, 2, 0],            // Arpeggio down
+  
+  // Turning/horizontal phrases
+  turn: [4, 5, 6, 5, 4, 3, 4],                // Turn around a note
+  wave: [4, 6, 5, 7, 6, 8, 7, 9],             // Ascending wave
+  pendulum: [5, 7, 5, 3, 5, 7, 5],            // Swing back and forth
+  
+  // Leaping phrases
+  leap: [2, 7, 2, 9, 4],                      // Big jumps
+  call: [5, 7, 9, 7],                         // Question
+  response: [9, 7, 5, 4, 5]                   // Answer
+};
+
+let gestureInterval = null;
+
+function startGestureSystem() {
+  if (gestureInterval) return;
+  
+  gestureInterval = setInterval(() => {
+    if (!audioCtx || !hasStarted) return;
+    
+    const now = Date.now();
+    
+    // Calculate movement delta since last check
+    const dx = currentX - gestureLastX;
+    const dy = currentY - gestureLastY;
+    
+    // Accumulate movement
+    gestureAccumulatorX += dx;
+    gestureAccumulatorY += dy;
+    
+    // Calculate movement magnitude and direction
+    const magnitude = Math.sqrt(dx * dx + dy * dy);
+    const accumMagnitude = Math.sqrt(gestureAccumulatorX * gestureAccumulatorX + 
+                                      gestureAccumulatorY * gestureAccumulatorY);
+    
+    // Store for next iteration
+    gestureLastX = currentX;
+    gestureLastY = currentY;
+    
+    // Only trigger phrase if:
+    // 1. Enough accumulated movement (threshold)
+    // 2. Not currently playing a phrase
+    // 3. Enough time since last phrase
+    const movementThreshold = 0.15;
+    const timeSinceLastGesture = now - lastGestureTime;
+    // TEMPO MULTIPLIER: lower = longer wait between phrases
+    const minTimeBetweenPhrases = 800 / tempoMultiplier;
+    
+    if (accumMagnitude > movementThreshold && 
+        !isGesturePlaying && 
+        !melodyMuted &&
+        timeSinceLastGesture > minTimeBetweenPhrases) {
+      
+      // Determine phrase type based on movement direction
+      const angle = Math.atan2(gestureAccumulatorY, gestureAccumulatorX);
+      const speed = accumMagnitude / (timeSinceLastGesture / 1000); // units per second
+      
+      // Get dominant element for scale
+      const weights = getElementWeights(currentX, currentY);
+      let dominantElement = 'earth';
+      let maxWeight = 0;
+      for (const [el, w] of Object.entries(weights)) {
+        if (w > maxWeight) { maxWeight = w; dominantElement = el; }
+      }
+      
+      // Choose phrase pattern based on direction and speed
+      let pattern;
+      if (gestureAccumulatorY > Math.abs(gestureAccumulatorX) * 0.5) {
+        // Moving UP - rising phrase
+        if (speed > 0.6) {
+          pattern = PHRASE_PATTERNS.risingArp;
+        } else if (speed > 0.3) {
+          pattern = PHRASE_PATTERNS.risingSkip;
+        } else {
+          pattern = PHRASE_PATTERNS.rising;
+        }
+      } else if (gestureAccumulatorY < -Math.abs(gestureAccumulatorX) * 0.5) {
+        // Moving DOWN - falling phrase
+        if (speed > 0.6) {
+          pattern = PHRASE_PATTERNS.fallingArp;
+        } else if (speed > 0.3) {
+          pattern = PHRASE_PATTERNS.fallingSkip;
+        } else {
+          pattern = PHRASE_PATTERNS.falling;
+        }
+      } else if (Math.abs(gestureAccumulatorX) > 0.1) {
+        // Horizontal movement - varied patterns
+        if (speed > 0.5) {
+          pattern = PHRASE_PATTERNS.leap;
+        } else if (gestureAccumulatorX > 0) {
+          pattern = PHRASE_PATTERNS.call;
+        } else {
+          pattern = PHRASE_PATTERNS.response;
+        }
+      } else {
+        // Gentle/ambiguous movement
+        pattern = Math.random() > 0.5 ? PHRASE_PATTERNS.wave : PHRASE_PATTERNS.pendulum;
+      }
+      
+      // Trigger the phrase!
+      playGesturePhrase(dominantElement, pattern, speed, accumMagnitude);
+      
+      // Reset accumulator
+      gestureAccumulatorX = 0;
+      gestureAccumulatorY = 0;
+      lastGestureTime = now;
+    }
+    
+    // Decay accumulator slowly if not moving much
+    if (magnitude < 0.01) {
+      gestureAccumulatorX *= 0.95;
+      gestureAccumulatorY *= 0.95;
+    }
+    
+  }, 100); // Check every 100ms (optimized from 50ms)
+}
+
+function playGesturePhrase(element, pattern, speed, intensity) {
+  if (!audioCtx) return;
+  
+  isGesturePlaying = true;
+  
+  const now = audioCtx.currentTime;
+  const scale = GESTURE_SCALES[element];
+  
+  // Speed affects note duration and spacing
+  // Faster movement = shorter, more staccato notes
+  // TEMPO MULTIPLIER: lower = longer notes, higher = shorter notes
+  const baseNoteDuration = (speed > 0.8 ? 0.12 : speed > 0.4 ? 0.2 : 0.35) / tempoMultiplier;
+  const noteSpacing = (speed > 0.8 ? 0.08 : speed > 0.4 ? 0.12 : 0.18) / tempoMultiplier;
+  
+  // Intensity affects volume and how many notes to play
+  const normalizedIntensity = Math.min(1, intensity / 0.5);
+  const notesToPlay = Math.max(3, Math.floor(pattern.length * (0.5 + normalizedIntensity * 0.5)));
+  
+  // Play the phrase
+  const notesSubset = pattern.slice(0, notesToPlay);
+  
+  notesSubset.forEach((scaleIndex, i) => {
+    const startTime = now + i * noteSpacing;
+    // Clamp index to scale range
+    const clampedIndex = Math.max(0, Math.min(scale.length - 1, scaleIndex));
+    const freq = scale[clampedIndex];
+    
+    playGestureNote(element, freq, startTime, baseNoteDuration, normalizedIntensity, i === 0, i === notesSubset.length - 1);
+  });
+  
+  // Mark phrase as complete after it finishes
+  const totalDuration = notesSubset.length * noteSpacing + baseNoteDuration + 0.5;
+  setTimeout(() => {
+    isGesturePlaying = false;
+  }, totalDuration * 1000);
+}
+
+function playGestureNote(element, freq, startTime, duration, intensity, isFirst, isLast) {
+  // Get current position weights - the note will BE these elements blended
+  const weights = getElementWeights(currentX, currentY);
+  
+  // === BLEND PARAMETERS FROM ALL ELEMENTS ===
+  let blendedDetune = 0;
+  let blendedResonance = 0;
+  let blendedCutoffRatio = 0;
+  let blendedAttack = 0;
+  let blendedRelease = 0;
+  let blendedReverbSend = 0;
+  let blendedDryLevel = 0;
+  
+  for (const [el, weight] of Object.entries(weights)) {
+    const config = DRONE_CONFIG[el];
+    blendedDetune += config.detuneRange * weight;
+    blendedResonance += config.resonance * weight;
+    blendedCutoffRatio += (config.maxCutoff / config.baseFreq) * weight;
+    blendedAttack += config.attack * weight;
+    blendedRelease += config.release * weight;
+    // Dry/Wet balance per element:
+    // Earth: 50% dry, 50% wet | Fire: 50% dry, 50% wet
+    // Water: 33% dry, 66% wet | Air: 33% dry, 66% wet
+    const elDry = (el === 'water' || el === 'air') ? 0.33 : 0.5;
+    const elWet = (el === 'water' || el === 'air') ? 0.66 : 0.5;
+    blendedDryLevel += elDry * weight;
+    blendedReverbSend += elWet * weight;
+  }
+  
+  // === RHODES-STYLE ENVELOPE: Two-stage decay (like real piano/Rhodes) ===
+  // Real Rhodes doesn't have sustain - it continuously decays while key is held
+  // Stage 1: Fast "bell" decay (initial transient fades)
+  // Stage 2: Slow "body" decay (warm fundamental rings out)
+  const rhodesEnvelope = {
+    earth:  { attack: 0.005, decay1: 0.15, decay2: 4.0, break: 0.65, release: 0.400 },
+    water:  { attack: 0.004, decay1: 0.12, decay2: 3.5, break: 0.60, release: 0.350 },
+    air:    { attack: 0.003, decay1: 0.10, decay2: 3.0, break: 0.55, release: 0.300 },
+    fire:   { attack: 0.002, decay1: 0.08, decay2: 2.5, break: 0.50, release: 0.250 }
+  };
+  
+  // Blend envelope parameters based on position weights
+  let noteAttack = 0, noteDecay1 = 0, noteDecay2 = 0, noteBreak = 0, noteRelease = 0;
+  for (const [el, weight] of Object.entries(weights)) {
+    noteAttack += rhodesEnvelope[el].attack * weight;
+    noteDecay1 += rhodesEnvelope[el].decay1 * weight;
+    noteDecay2 += rhodesEnvelope[el].decay2 * weight;
+    noteBreak += rhodesEnvelope[el].break * weight;
+    noteRelease += rhodesEnvelope[el].release * weight;
+  }
+  
+  // Calculate time until next arpeggio (notes should ring until then)
+  // minTimeBetweenPhrases = 800 / tempoMultiplier (in ms)
+  const timeUntilNextArpeggio = (800 / tempoMultiplier) / 1000; // convert to seconds
+  const noteDur = isLast ? timeUntilNextArpeggio * 0.9 : duration;
+  
+  // Find dominant and second element for waveform blending
+  let dominantEl = 'earth';
+  let maxW = 0;
+  let secondEl = 'water';
+  let secondW = 0;
+  for (const [el, w] of Object.entries(weights)) {
+    if (w > maxW) {
+      secondEl = dominantEl;
+      secondW = maxW;
+      dominantEl = el;
+      maxW = w;
+    } else if (w > secondW) {
+      secondEl = el;
+      secondW = w;
+    }
+  }
+  
+  // === STACKED FIFTHS OVERTONE SERIES ===
+  // Just like our drones: root → fifth → ninth → thirteenth → seventeenth
+  // Each successive fifth is quieter (natural overtone falloff)
+  // TRANSPOSED ONE OCTAVE UP (freq * 2)
+  const baseFreq = freq * 2;
+  const subFreq = freq;  // Sub harmonic = one octave below baseFreq
+  const fifthRatio = 1.5;  // Perfect fifth = 3/2
+  const partialFreqs = [
+    subFreq,                                     // Sub (one octave below root)
+    baseFreq,                                    // Root
+    baseFreq * fifthRatio,                       // Fifth (e.g., C5 → G5)
+    baseFreq * fifthRatio * fifthRatio,          // Ninth (G5 → D6)
+    baseFreq * fifthRatio * fifthRatio * fifthRatio,  // Thirteenth (D6 → A6)
+    baseFreq * fifthRatio * fifthRatio * fifthRatio * fifthRatio  // Seventeenth (A6 → E7)
+  ];
+  
+  // Partial gains (initial attack level) - sub is quieter
+  const partialGains = [0.4, 1.0, 0.21, 0.13, 0.08, 0.05];
+  
+  // Rhodes-style: higher partials decay faster (bell fades, warmth remains)
+  // Each partial has its own decay rate multiplier (higher partials = faster decay)
+  const partialDecay1Mult = [0.8, 1.0, 1.5, 2.0, 3.0, 4.0];   // Bell transient decay speed
+  const partialDecay2Mult = [0.6, 1.0, 1.8, 2.5, 4.0, 6.0];   // Body decay speed (upper partials die faster)
+  const partialBreakMult = [1.0, 1.0, 0.8, 0.6, 0.4, 0.2];    // Break level (upper partials decay further)
+  
+  // Create oscillators for each partial with individual envelopes
+  const oscillators = [];
+  const oscGains = [];
+  
+  for (let i = 0; i < partialFreqs.length; i++) {
+    const osc = audioCtx.createOscillator();
+    const oscGain = audioCtx.createGain();
+    
+    // Sub harmonic uses sine for clean low end
+    if (i === 0) {
+      osc.type = 'sine';
+    } else {
+      // Alternate waveforms between dominant and second element
+      osc.type = (i % 2 === 0) ? DRONE_CONFIG[dominantEl].waveform : DRONE_CONFIG[secondEl].waveform;
+      // Higher partials use sine for smoothness
+      if (i >= 4) osc.type = 'sine';
+    }
+    
+    osc.frequency.value = partialFreqs[i];
+    
+    // Slight detune on each partial for richness (alternating +/-), but not on sub
+    osc.detune.value = i === 0 ? 0 : blendedDetune * 0.5 * (i % 2 === 0 ? 1 : -1) * (i * 0.3);
+    
+    // === TWO-STAGE DECAY ENVELOPE (authentic Rhodes/piano behavior) ===
+    const peakGain = partialGains[i];
+    const partialDecay1 = noteDecay1 / partialDecay1Mult[i];  // Faster for upper partials
+    const partialDecay2 = noteDecay2 / partialDecay2Mult[i];  // Much faster for upper partials
+    const partialBreak = noteBreak * partialBreakMult[i];     // Lower break point for upper partials
+    const partialRelease = noteRelease / (1 + i * 0.3);       // Faster release for upper partials
+    
+    // Calculate where this partial will be at end of note (continuous decay)
+    // After decay1, we're at break level, then decay2 continues through noteDur
+    const decay2Duration = Math.max(0, noteDur - partialDecay1);
+    const decay2Factor = Math.exp(-decay2Duration / partialDecay2);
+    const levelAtNoteEnd = Math.max(0.001, peakGain * partialBreak * decay2Factor);
+    
+    const partialTotalDur = noteAttack + noteDur + partialRelease;
+    
+    // A: Attack (instant tine strike)
+    oscGain.gain.setValueAtTime(0, startTime);
+    oscGain.gain.linearRampToValueAtTime(peakGain, startTime + noteAttack);
+    
+    // D1: Fast "bell" decay to break level
+    oscGain.gain.exponentialRampToValueAtTime(
+      Math.max(0.001, peakGain * partialBreak), 
+      startTime + noteAttack + partialDecay1
+    );
+    
+    // D2: Slow continuous decay through the sustain period (key held)
+    // This is the key difference from ADSR - no flat sustain, just continuous decay
+    oscGain.gain.exponentialRampToValueAtTime(
+      levelAtNoteEnd,
+      startTime + noteAttack + noteDur
+    );
+    
+    // R: Release when "key released" (next arpeggio coming)
+    oscGain.gain.exponentialRampToValueAtTime(0.001, startTime + partialTotalDur);
+    oscGain.gain.setValueAtTime(0, startTime + partialTotalDur + 0.01);
+    
+    osc.connect(oscGain);
+    oscillators.push(osc);
+    oscGains.push(oscGain);
+  }
+  
+  // === MIXER for all partials ===
+  const partialMixer = audioCtx.createGain();
+  partialMixer.gain.value = 0.5;
+  
+  for (const oscGain of oscGains) {
+    oscGain.connect(partialMixer);
+  }
+  
+  // === FILTER (blended characteristics) ===
+  const filter = audioCtx.createBiquadFilter();
+  filter.type = 'lowpass';
+  filter.Q.value = blendedResonance * 0.5;
+  
+  // Filter envelope: bright attack, continuous darkening (Rhodes-style)
+  const baseCutoff = freq * 2;
+  const peakCutoff = freq * blendedCutoffRatio * 1.2; // Brighter on attack
+  const totalDur = noteAttack + noteDur + noteRelease;
+  
+  filter.frequency.setValueAtTime(peakCutoff, startTime);
+  // Fast initial decay of brightness (bell transient)
+  filter.frequency.exponentialRampToValueAtTime(baseCutoff, startTime + noteAttack + noteDecay1);
+  // Continue darkening through the note (mimics harmonic decay)
+  filter.frequency.exponentialRampToValueAtTime(baseCutoff * 0.7, startTime + noteAttack + noteDur);
+  // Final darkening on release
+  filter.frequency.exponentialRampToValueAtTime(baseCutoff * 0.5, startTime + totalDur);
+  
+  // === MASTER VOLUME ===
+  const amp = audioCtx.createGain();
+  const peakVol = (isFirst ? 0.85 : 0.55) * (0.625 + intensity * 0.375);
+  amp.gain.value = peakVol;
+  
+  // === STEREO - frequency-based panning (authentic Rhodes) ===
+  // C3 (130.82 Hz) = 100% left, F#7 (2959.96 Hz) = 100% right
+  const minFreq = 130.82;
+  const maxFreq = 2959.96;
+  const baseFreqForPan = freq * 2; // The transposed frequency
+  const panPosition = ((baseFreqForPan - minFreq) / (maxFreq - minFreq)) * 2 - 1;
+  const pan = audioCtx.createStereoPanner();
+  pan.pan.value = Math.max(-1, Math.min(1, panPosition));
+  
+  // === CONNECTIONS ===
+  // Partials → mixer → filter → amp → pan → dry/wet split
+  partialMixer.connect(filter);
+  filter.connect(amp);
+  amp.connect(pan);
+  
+  // Dry send
+  const dryGain = audioCtx.createGain();
+  dryGain.gain.value = blendedDryLevel;
+  pan.connect(dryGain);
+  dryGain.connect(masterGain);
+  
+  // Reverb send (wet)
+  const reverbSend = audioCtx.createGain();
+  reverbSend.gain.value = blendedReverbSend;
+  pan.connect(reverbSend);
+  reverbSend.connect(reverbNode.input);
+  
+  // === START/STOP ===
+  const stopTime = startTime + totalDur + 0.1;
+  for (const osc of oscillators) {
+    osc.start(startTime);
+    osc.stop(stopTime);
+  }
+}
+
+// =======================================================
+// AUDIO INITIALIZATION
+// =======================================================
+function initAudio() {
+  if (audioCtx) return;
+  
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  
+  masterGain = audioCtx.createGain();
+  masterGain.gain.value = 0.8;
+  
+  // Master compressor (gentle glue)
+  const masterComp = audioCtx.createDynamicsCompressor();
+  masterComp.threshold.value = -12;
+  masterComp.knee.value = 20;
+  masterComp.ratio.value = 2;
+  masterComp.attack.value = 0.030;
+  masterComp.release.value = 0.100;
+  
+  // Brick-wall limiter (safety)
+  const limiter = audioCtx.createDynamicsCompressor();
+  limiter.threshold.value = -1;
+  limiter.knee.value = 0;        // Hard knee for brick-wall
+  limiter.ratio.value = 20;      // High ratio = limiting
+  limiter.attack.value = 0.001;  // Instant attack
+  limiter.release.value = 0.150;
+  
+  // === MOVEMENT RESPONSE ===
+  // Filter that opens up when moving, settles when still
+  movementBrightness = audioCtx.createBiquadFilter();
+  movementBrightness.type = 'lowpass';
+  movementBrightness.frequency.value = 2000; // Base brightness
+  movementBrightness.Q.value = 0.5;
+  
+  // Gain boost when moving
+  movementGain = audioCtx.createGain();
+  movementGain.gain.value = 1.0; // Base level
+  
+  // === REGISTER SHIFT ===
+  // Vertical position controls bass/treble balance
+  // Bottom (Earth/Water) = more bass, less treble
+  // Top (Fire/Air) = less bass, more treble
+  
+  registerHighpass = audioCtx.createBiquadFilter();
+  registerHighpass.type = 'highpass';
+  registerHighpass.frequency.value = 20; // Start with no bass cut
+  registerHighpass.Q.value = 0.5;
+  
+  registerLowpass = audioCtx.createBiquadFilter();
+  registerLowpass.type = 'lowpass';
+  registerLowpass.frequency.value = 20000; // Start fully open
+  registerLowpass.Q.value = 0.5;
+  
+  // Convolution Reverb
+  reverbNode = new ConvolutionReverb(audioCtx, {
+    duration: 8.0,
+    decay: 0.8,
+    density: 0.98,
+    damping: 0.15,
+    preDelay: 0.008,
+    stereoWidth: 1.0,
+    outputGain: 1.2
+  });
+  
+  reverbGain = audioCtx.createGain();
+  reverbGain.gain.value = 0.6;
+  
+  // Connect reverb
+  reverbNode.output.connect(reverbGain);
+  
+  // Routing: master → movement filter → movement gain → register HP → register LP → compressor → limiter → destination
+  reverbGain.connect(movementBrightness);
+  masterGain.connect(movementBrightness);
+  movementBrightness.connect(movementGain);
+  movementGain.connect(registerHighpass);
+  registerHighpass.connect(registerLowpass);
+  registerLowpass.connect(masterComp);
+  masterComp.connect(limiter);
+  limiter.connect(audioCtx.destination);
+  
+  // Create drone voices
+  for (const [element, config] of Object.entries(DRONE_CONFIG)) {
+    drones[element] = new DroneVoice(audioCtx, config, masterGain, reverbNode.input, element);
+    drones[element].start();
+  }
+  
+  // Initialize pedal tone (shifting bass root)
+  initPedalTone();
+  
+  // Start pitched grain scheduler
+  startGrainScheduler();
+  
+  // Start gestural phrase system
+  startGestureSystem();
+  
+  // Start consolidated resonant filter stepper
+  startResonantStepper();
+  
+  // Initial weights based on center position
+  updateDroneWeights();
+}
+
+// =======================================================
+// AUTO MODE POINT GENERATORS
+// =======================================================
+function getAutoModePoint(mode, u) {
+  const pattern = PATTERNS[mode - 1];
+  if (!pattern) return { x: 0, y: 0 };
+  const pt = pattern.fn(u);
+  // Safety: ensure valid coordinates
+  return {
+    x: isFinite(pt.x) ? Math.max(-1, Math.min(1, pt.x)) : 0,
+    y: isFinite(pt.y) ? Math.max(-1, Math.min(1, pt.y)) : 0
+  };
+}
+
+function getPatternScale(mode) {
+  const pattern = PATTERNS[mode - 1];
+  return pattern ? pattern.scale : 0.88;
+}
+
+function getPatternCycleMs(mode) {
+  const pattern = PATTERNS[mode - 1];
+  const baseCycle = pattern ? pattern.cycleMs : 60000;
+  // TEMPO MULTIPLIER: lower = slower pattern, higher = faster pattern
+  return baseCycle / tempoMultiplier;
+}
+
+function updateAutoModeTarget() {
+  const now = performance.now();
+  const elapsed = now - autoStartTime;
+  const T = getPatternCycleMs(autoMode);
+  const u = (elapsed % T) / T;  // u goes from 0 to 1
+  
+  const base = getAutoModePoint(autoMode, u);
+  const baseScale = getPatternScale(autoMode);
+  
+  // In landscape, rotate pattern -90° to match icon rotation
+  // Except Lissajous (1) and Infinity (10) which are asymmetric and stay as-is
+  if (isLandscape() && autoMode !== 1 && autoMode !== 10) {
+    targetX = base.y * baseScale;
+    targetY = -base.x * baseScale;
+  } else {
+    targetX = base.x * baseScale;
+    targetY = base.y * baseScale;
+  }
+}
+
+function startAutoMode(mode) {
+  autoMode = mode || autoMode;
+  autoModeEnabled = true;
+  autoStartTime = performance.now();
+  
+  // Invalidate icon cache to force redraw with correct active state
+  patternIconCache = null;
+  btnNeedsRedraw = true;
+  
+  // Clear the trail when starting a new mode
+  trail.length = 0;
+  lastTrailPoint = null;
+  lastDrawnTrailIndex = 0;
+  
+  // Clear the offscreen trail canvas
+  if (trailCtx) {
+    trailCtx.clearRect(0, 0, padWidth, padHeight);
+  }
+}
+
+function stopAutoMode() {
+  autoModeEnabled = false;
+  // Invalidate icon cache to force redraw
+  patternIconCache = null;
+  btnNeedsRedraw = true;
+}
+
+// =======================================================
+// ELEMENT WEIGHT CALCULATION
+// =======================================================
+function getElementWeights(nx, ny) {
+  // Safety: ensure inputs are valid
+  nx = isFinite(nx) ? Math.max(-1, Math.min(1, nx)) : 0;
+  ny = isFinite(ny) ? Math.max(-1, Math.min(1, ny)) : 0;
+  
+  // nx, ny are in [-1, 1]
+  // Map to [0, 1] for weight calculation
+  const x = (nx + 1) / 2;
+  const y = (ny + 1) / 2;
+  
+  // Fire: top-left (low x, high y)
+  // Air: top-right (high x, high y)
+  // Water: bottom-left (low x, low y)
+  // Earth: bottom-right (high x, low y)
+  
+  let fire = (1 - x) * y;
+  let air = x * y;
+  let water = (1 - x) * (1 - y);
+  let earth = x * (1 - y);
+  
+  // Softer falloff (less extreme corners)
+  const shape = 1.5;
+  fire = Math.pow(Math.max(0, fire), shape);
+  air = Math.pow(Math.max(0, air), shape);
+  water = Math.pow(Math.max(0, water), shape);
+  earth = Math.pow(Math.max(0, earth), shape);
+  
+  // Normalize (with safety for zero sum)
+  const sum = fire + air + water + earth;
+  const safeSum = sum > 0.0001 ? sum : 1;
+  
+  return {
+    fire: fire / safeSum,
+    air: air / safeSum,
+    water: water / safeSum,
+    earth: earth / safeSum
+  };
+}
+
+function updateDroneWeights() {
+  if (!audioCtx) return;
+  
+  const weights = getElementWeights(currentX, currentY);
+  
+  // Update each drone with smooth transitions
+  for (const [element, drone] of Object.entries(drones)) {
+    drone.setWeight(weights[element], 1.5); // 1.5 second transitions
+  }
+  
+  // Update pedal tone (shifting bass root)
+  updatePedalTone(weights);
+  
+  // Update UI labels
+}
+
+// =======================================================
+// CANVAS DRAWING
+// =======================================================
+function createPaperTexture() {
+  paperTex = document.createElement('canvas');
+  paperTex.width = 256;
+  paperTex.height = 256;
+  const ctx = paperTex.getContext('2d');
+  
+  // Base with warm paper tone
+  ctx.fillStyle = '#f8f6f3';
+  ctx.fillRect(0, 0, paperTex.width, paperTex.height);
+  
+  // Random dots for fiber texture
+  const dots = 4000;
+  for (let i = 0; i < dots; i++) {
+    const x = Math.random() * paperTex.width;
+    const y = Math.random() * paperTex.height;
+    const v = 220 + Math.random() * 20;
+    ctx.fillStyle = `rgba(${v},${v},${v},${0.20 + Math.random() * 0.10})`;
+    ctx.fillRect(x, y, 1, 1);
+  }
+  
+  // Subtle vertical grain lines
+  const grainCols = 40;
+  for (let i = 0; i < grainCols; i++) {
+    const x = Math.random() * paperTex.width;
+    ctx.fillStyle = 'rgba(0,0,0,0.03)';
+    ctx.fillRect(x, 0, 1, paperTex.height);
+  }
+}
+
+function initCanvas() {
+  padCanvas = document.getElementById('pad');
+  padCtx = padCanvas.getContext('2d');
+  
+  // Create offscreen canvas for trail rendering
+  trailCanvas = document.createElement('canvas');
+  trailCtx = trailCanvas.getContext('2d');
+  
+  // Create offscreen canvas for static background
+  bgCanvas = document.createElement('canvas');
+  bgCtx = bgCanvas.getContext('2d');
+  
+  // Create offscreen canvas for buttons
+  btnCanvas = document.createElement('canvas');
+  btnCtx = btnCanvas.getContext('2d');
+  
+  // Create offscreen canvas for cursor glow
+  glowCanvas = document.createElement('canvas');
+  glowCanvas.width = GLOW_SIZE;
+  glowCanvas.height = GLOW_SIZE;
+  glowCtx = glowCanvas.getContext('2d');
+  
+  // Create offscreen canvas for melody button glow
+  melodyGlowCanvas = document.createElement('canvas');
+  melodyGlowCanvas.width = MELODY_GLOW_SIZE;
+  melodyGlowCanvas.height = MELODY_GLOW_SIZE;
+  melodyGlowCtx = melodyGlowCanvas.getContext('2d');
+  
+  createPaperTexture();
+  resizeCanvas();
+  window.addEventListener('resize', resizeCanvas);
+}
+
+// Get device pixel ratio (for crisp rendering on retina/mobile displays)
+function getPixelRatio() {
+  return Math.min(window.devicePixelRatio || 1, 2); // Cap at 2x for mobile performance
+}
+
+function resizeCanvas() {
+  const dpr = getPixelRatio();
+  
+  // Detect orientation change
+  const nowLandscape = window.innerWidth > window.innerHeight;
+  const orientationChanged = hasStarted && (nowLandscape !== wasLandscape);
+  wasLandscape = nowLandscape;
+  
+  padWidth = window.innerWidth;
+  padHeight = window.innerHeight;
+  
+  // Set canvas size accounting for device pixel ratio
+  padCanvas.width = padWidth * dpr;
+  padCanvas.height = padHeight * dpr;
+  
+  // Set CSS size to maintain layout
+  padCanvas.style.width = padWidth + 'px';
+  padCanvas.style.height = padHeight + 'px';
+  
+  // Scale context to match DPR
+  padCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  
+  // Invalidate caches that depend on size
+  patternIconCache = null;
+  
+  // Resize and flag offscreen background canvas
+  if (bgCanvas) {
+    bgCanvas.width = padWidth * dpr;
+    bgCanvas.height = padHeight * dpr;
+    bgCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    bgNeedsRedraw = true;
+  }
+  
+  // Resize and flag offscreen button canvas
+  if (btnCanvas) {
+    btnCanvas.width = padWidth * dpr;
+    btnCanvas.height = padHeight * dpr;
+    btnCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    btnNeedsRedraw = true;
+  }
+  
+  // Resize offscreen trail canvas to match (also with DPR)
+  if (trailCanvas) {
+    trailCanvas.width = padWidth * dpr;
+    trailCanvas.height = padHeight * dpr;
+    trailCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    
+    // Cache the drawing coordinates
+    const padSize = Math.min(padWidth, padHeight) * PAD_SCALE * 2;
+    cachedPadHalf = padSize / 2;
+    cachedCenterX = padWidth / 2;
+    cachedCenterY = padHeight / 2;
+    
+    // Reset trail on orientation change, otherwise redraw to new size
+    if (orientationChanged) {
+      resetTrail();
+    } else {
+      redrawEntireTrail();
+    }
+  }
+}
+
+function redrawEntireTrail() {
+  if (!trailCtx || trail.length < 2) return;
+  
+  // Clear the offscreen canvas
+  trailCtx.clearRect(0, 0, padWidth, padHeight);
+  
+  // Setup drawing style
+  trailCtx.lineCap = 'round';
+  trailCtx.lineJoin = 'round';
+  trailCtx.lineWidth = 1.5;
+  
+  // Draw all trail segments
+  for (let i = 1; i < trail.length; i++) {
+    const prev = trail[i - 1];
+    const curr = trail[i];
+    
+    // Use averaged color, solid opacity
+    const r = ((prev.r + curr.r) / 2) | 0;
+    const g = ((prev.g + curr.g) / 2) | 0;
+    const b = ((prev.b + curr.b) / 2) | 0;
+    
+    trailCtx.strokeStyle = `rgb(${r}, ${g}, ${b})`;
+    trailCtx.beginPath();
+    trailCtx.moveTo(
+      cachedCenterX + prev.x * cachedPadHalf,
+      cachedCenterY - prev.y * cachedPadHalf
+    );
+    trailCtx.lineTo(
+      cachedCenterX + curr.x * cachedPadHalf,
+      cachedCenterY - curr.y * cachedPadHalf
+    );
+    trailCtx.stroke();
+  }
+  
+  // Update the index tracker
+  lastDrawnTrailIndex = trail.length;
+}
+
+function drawCanvas() {
+  const ctx = padCtx;
+  const w = padWidth;
+  const h = padHeight;
+  
+  // Calculate the pad as a perfect square based on smaller dimension
+  const padSize = Math.min(w, h) * PAD_SCALE * 2;
+  const padHalf = padSize / 2;
+  const centerX = w / 2;
+  const centerY = h / 2;
+  
+  // Get current weights
+  const weights = getElementWeights(currentX, currentY);
+  
+  // Blend colors based on weights
+  let r = 0, g = 0, b = 0;
+  for (const [element, weight] of Object.entries(weights)) {
+    const color = DRONE_CONFIG[element].color;
+    r += color[0] * weight;
+    g += color[1] * weight;
+    b += color[2] * weight;
+  }
+  
+  // Check if color changed significantly (triggers background + glow rebuild)
+  const colorThreshold = 8;
+  const colorChanged = 
+    Math.abs((r|0) - bgCachedColor.r) > colorThreshold ||
+    Math.abs((g|0) - bgCachedColor.g) > colorThreshold ||
+    Math.abs((b|0) - bgCachedColor.b) > colorThreshold;
+  
+  if (colorChanged) {
+    bgNeedsRedraw = true;
+  }
+  
+  // === LAYER 1: Static background (paper + bleed + pad + grid + crosshairs) ===
+  if (bgNeedsRedraw && bgCtx) {
+    bgCachedColor.r = r|0;
+    bgCachedColor.g = g|0;
+    bgCachedColor.b = b|0;
+    
+    const bctx = bgCtx;
+    
+    // Background
+    bctx.fillStyle = '#f8f6f3';
+    bctx.fillRect(0, 0, w, h);
+    
+    // Paper texture overlay
+    if (!paperPattern && paperTex) {
+      paperPattern = bctx.createPattern(paperTex, 'repeat');
+    }
+    if (paperPattern) {
+      bctx.save();
+      bctx.globalAlpha = 0.18;
+      bctx.fillStyle = paperPattern;
+      bctx.fillRect(0, 0, w, h);
+      bctx.restore();
+    }
+    
+    // Bleed gradient
+    const bleedRadius = padSize * 0.75;
+    const bleedGrad = bctx.createRadialGradient(centerX, centerY, 0, centerX, centerY, bleedRadius);
+    bleedGrad.addColorStop(0.0, `rgba(${r|0}, ${g|0}, ${b|0}, 0.12)`);
+    bleedGrad.addColorStop(0.5, `rgba(${r|0}, ${g|0}, ${b|0}, 0.06)`);
+    bleedGrad.addColorStop(1.0, 'rgba(248, 246, 243, 0)');
+    bctx.fillStyle = bleedGrad;
+    bctx.fillRect(0, 0, w, h);
+    
+    // Pad area with gradient
+    const padLeft = centerX - padHalf;
+    const padTop = centerY - padHalf;
+    const padRight = centerX + padHalf;
+    const padBottom = centerY + padHalf;
+    
+    const padGrad = bctx.createRadialGradient(centerX, centerY, 0, centerX, centerY, padHalf * 1.1);
+    padGrad.addColorStop(0.0, `rgba(${r|0}, ${g|0}, ${b|0}, 0.35)`);
+    padGrad.addColorStop(0.4, `rgba(${r|0}, ${g|0}, ${b|0}, 0.18)`);
+    padGrad.addColorStop(0.75, `rgba(${r|0}, ${g|0}, ${b|0}, 0.06)`);
+    padGrad.addColorStop(1.0, 'rgba(248, 246, 243, 0)');
+    
+    bctx.save();
+    bctx.beginPath();
+    bctx.rect(padLeft, padTop, padSize, padSize);
+    bctx.clip();
+    bctx.fillStyle = padGrad;
+    bctx.fillRect(padLeft, padTop, padSize, padSize);
+    bctx.restore();
+    
+    bctx.strokeStyle = 'rgba(0, 0, 0, 0.12)';
+    bctx.lineWidth = 1;
+    bctx.strokeRect(padLeft, padTop, padSize, padSize);
+    
+    // Golden ratio grid lines
+    const phi = 1.618;
+    bctx.save();
+    bctx.strokeStyle = 'rgba(0, 0, 0, 0.06)';
+    bctx.lineWidth = 0.8;
+    const v1 = padLeft + padSize / phi;
+    const v2 = padRight - padSize / phi;
+    const h1 = padTop + padSize / phi;
+    const h2 = padBottom - padSize / phi;
+    bctx.beginPath();
+    bctx.moveTo(v1, padTop); bctx.lineTo(v1, padBottom);
+    bctx.moveTo(v2, padTop); bctx.lineTo(v2, padBottom);
+    bctx.moveTo(padLeft, h1); bctx.lineTo(padRight, h1);
+    bctx.moveTo(padLeft, h2); bctx.lineTo(padRight, h2);
+    bctx.stroke();
+    bctx.restore();
+    
+    // Center crosshairs
+    bctx.strokeStyle = 'rgba(0, 0, 0, 0.10)';
+    bctx.lineWidth = 1;
+    bctx.beginPath();
+    bctx.moveTo(centerX, padTop); bctx.lineTo(centerX, padBottom);
+    bctx.moveTo(padLeft, centerY); bctx.lineTo(padRight, centerY);
+    bctx.stroke();
+    
+    // Draw element symbols onto background
+    drawElementSymbols(bctx, w, h, weights);
+    
+    bgNeedsRedraw = false;
+  }
+  
+  // Blit cached background
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.drawImage(bgCanvas, 0, 0);
+  ctx.restore();
+  
+  // === LAYER 2: Trail ===
+  drawTrailIncremental();
+  if (trailCanvas && trail.length > 1) {
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.drawImage(trailCanvas, 0, 0);
+    ctx.restore();
+  }
+  
+  // === LAYER 3: Cursor glow + indicator ===
+  const cx = centerX + currentX * padHalf;
+  const cy = centerY - currentY * padHalf;
+  
+  // Rebuild glow canvas if color changed
+  const glowColorThreshold = 15;
+  if (Math.abs((r|0) - glowCachedColor.r) > glowColorThreshold ||
+      Math.abs((g|0) - glowCachedColor.g) > glowColorThreshold ||
+      Math.abs((b|0) - glowCachedColor.b) > glowColorThreshold) {
+    glowCachedColor.r = r|0;
+    glowCachedColor.g = g|0;
+    glowCachedColor.b = b|0;
+    
+    glowCtx.clearRect(0, 0, GLOW_SIZE, GLOW_SIZE);
+    const half = GLOW_SIZE / 2;
+    const grad = glowCtx.createRadialGradient(half, half, 0, half, half, half);
+    grad.addColorStop(0, `rgba(${r|0}, ${g|0}, ${b|0}, 0.15)`);
+    grad.addColorStop(0.5, `rgba(${r|0}, ${g|0}, ${b|0}, 0.05)`);
+    grad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+    glowCtx.fillStyle = grad;
+    glowCtx.beginPath();
+    glowCtx.arc(half, half, half, 0, Math.PI * 2);
+    glowCtx.fill();
+  }
+  
+  // Stamp glow at cursor position
+  ctx.drawImage(glowCanvas, cx - GLOW_SIZE / 2, cy - GLOW_SIZE / 2, GLOW_SIZE, GLOW_SIZE);
+  
+  // Inner cursor ring
+  ctx.strokeStyle = 'rgba(0, 0, 0, 0.2)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.arc(cx, cy, 12, 0, Math.PI * 2);
+  ctx.stroke();
+  
+  // Center dot
+  ctx.fillStyle = `rgba(${r|0}, ${g|0}, ${b|0}, 0.4)`;
+  ctx.beginPath();
+  ctx.arc(cx, cy, 3, 0, Math.PI * 2);
+  ctx.fill();
+  
+  // === LAYER 4: Mode buttons (cached) ===
+  const modeChanged = btnCachedAutoMode !== autoMode || btnCachedAutoEnabled !== autoModeEnabled;
+  if ((btnNeedsRedraw || modeChanged) && btnCtx) {
+    btnCtx.clearRect(0, 0, w, h);
+    drawModeButtons(btnCtx, w, h);
+    btnCachedAutoMode = autoMode;
+    btnCachedAutoEnabled = autoModeEnabled;
+    btnNeedsRedraw = false;
+  }
+  
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.drawImage(btnCanvas, 0, 0);
+  ctx.restore();
+  
+  // === LAYER 5: Melody mute button ===
+  drawMelodyButton(ctx, w, h, r|0, g|0, b|0);
+}
+
+// =======================================================
+// MELODY MUTE BUTTON
+// =======================================================
+function drawMelodyButton(ctx, w, h, cr, cg, cb) {
+  const size = Math.max(14, Math.min(w, h) * 0.025);
+  const hitR = size * 1.8;
+  
+  // Calculate pad dimensions
+  const padSize = Math.min(w, h) * PAD_SCALE * 2;
+  const padHalf = padSize / 2;
+  const centerX = w / 2;
+  const centerY = h / 2;
+  const padRight = centerX + padHalf;
+  const padBottom = centerY + padHalf;
+  
+  const landscape = isLandscape();
+  let bx, by;
+  
+  if (landscape) {
+    // Landscape: closer to the pad
+    const rightSpace = w - padRight;
+    bx = padRight + rightSpace * 0.16;
+    by = centerY;
+  } else {
+    // Portrait: slightly further from pad
+    const bottomSpace = h - padBottom;
+    bx = centerX;
+    by = padBottom + bottomSpace * 0.16;
+  }
+  
+  // Update hit region
+  MELODY_BUTTON.cx = bx;
+  MELODY_BUTTON.cy = by;
+  MELODY_BUTTON.r = hitR;
+  
+  ctx.save();
+  
+  // Boost brightness and saturation for the indicator light
+  // Push each channel towards its max while increasing overall brightness
+  const boost = 1.6;
+  const satBoost = 1.4;
+  const avg = (cr + cg + cb) / 3;
+  const lr = Math.min(255, Math.round(((cr - avg) * satBoost + avg) * boost));
+  const lg = Math.min(255, Math.round(((cg - avg) * satBoost + avg) * boost));
+  const lb = Math.min(255, Math.round(((cb - avg) * satBoost + avg) * boost));
+  
+  const btnRadius = size * 1.0;
+  
+  if (!melodyMuted) {
+    // Rebuild melody glow if color changed
+    const melGlowThresh = 15;
+    if (Math.abs(lr - melodyGlowCachedColor.r) > melGlowThresh ||
+        Math.abs(lg - melodyGlowCachedColor.g) > melGlowThresh ||
+        Math.abs(lb - melodyGlowCachedColor.b) > melGlowThresh) {
+      melodyGlowCachedColor.r = lr;
+      melodyGlowCachedColor.g = lg;
+      melodyGlowCachedColor.b = lb;
+      
+      const mhalf = MELODY_GLOW_SIZE / 2;
+      melodyGlowCtx.clearRect(0, 0, MELODY_GLOW_SIZE, MELODY_GLOW_SIZE);
+      const glow = melodyGlowCtx.createRadialGradient(mhalf, mhalf, 0, mhalf, mhalf, mhalf);
+      glow.addColorStop(0, `rgba(${lr}, ${lg}, ${lb}, 0.35)`);
+      glow.addColorStop(0.5, `rgba(${lr}, ${lg}, ${lb}, 0.12)`);
+      glow.addColorStop(1, `rgba(${lr}, ${lg}, ${lb}, 0)`);
+      melodyGlowCtx.fillStyle = glow;
+      melodyGlowCtx.beginPath();
+      melodyGlowCtx.arc(mhalf, mhalf, mhalf, 0, Math.PI * 2);
+      melodyGlowCtx.fill();
+    }
+    
+    // Stamp cached glow
+    ctx.drawImage(melodyGlowCanvas, bx - MELODY_GLOW_SIZE / 2, by - MELODY_GLOW_SIZE / 2, MELODY_GLOW_SIZE, MELODY_GLOW_SIZE);
+    
+    // Filled circle with the boosted color
+    ctx.beginPath();
+    ctx.arc(bx, by, btnRadius, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(${lr}, ${lg}, ${lb}, 0.25)`;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.25)';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+  } else {
+    // Muted: plain circle
+    ctx.beginPath();
+    ctx.arc(bx, by, btnRadius, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.08)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+  
+  // Draw note glyph
+  ctx.font = `${size * 1.6}px "Cormorant Garamond", Georgia, serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  
+  if (melodyMuted) {
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.15)';
+    ctx.fillText('♪', bx, by);
+    
+    // Strike-through
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.25)';
+    ctx.lineWidth = 1.5;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(bx - size * 0.6, by + size * 0.5);
+    ctx.lineTo(bx + size * 0.6, by - size * 0.5);
+    ctx.stroke();
+  } else {
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
+    ctx.fillText('♪', bx, by);
+  }
+  
+  ctx.restore();
+}
+
+function hitTestMelodyButton(x, y) {
+  const dx = x - MELODY_BUTTON.cx;
+  const dy = y - MELODY_BUTTON.cy;
+  return dx * dx + dy * dy <= MELODY_BUTTON.r * MELODY_BUTTON.r;
+}
+
+function drawElementSymbol(ctx, cx, cy, size, inverted, hasBar, weight, elementName) {
+  const h = size;
+  const sw = size * 0.9;
+  
+  ctx.save();
+  
+  // Always full opaque black
+  ctx.strokeStyle = 'rgba(0,0,0,1)';
+  
+  ctx.lineWidth = 1.5;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  
+  // Draw triangle
+  ctx.beginPath();
+  if (!inverted) {
+    // Pointing up (Fire, Air)
+    ctx.moveTo(cx, cy - h * 0.8);
+    ctx.lineTo(cx - sw * 0.55, cy + h * 0.5);
+    ctx.lineTo(cx + sw * 0.55, cy + h * 0.5);
+    ctx.closePath();
+  } else {
+    // Pointing down (Water, Earth)
+    ctx.moveTo(cx, cy + h * 0.8);
+    ctx.lineTo(cx - sw * 0.55, cy - h * 0.5);
+    ctx.lineTo(cx + sw * 0.55, cy - h * 0.5);
+    ctx.closePath();
+  }
+  ctx.stroke();
+  
+  // Horizontal bar for Air and Earth
+  if (hasBar) {
+    ctx.beginPath();
+    if (!inverted) {
+      const barY = cy + h * 0.05;
+      ctx.moveTo(cx - sw * 0.5, barY);
+      ctx.lineTo(cx + sw * 0.5, barY);
+    } else {
+      const barY = cy - h * 0.05;
+      ctx.moveTo(cx - sw * 0.5, barY);
+      ctx.lineTo(cx + sw * 0.5, barY);
+    }
+    ctx.stroke();
+  }
+  
+  ctx.restore();
+}
+
+function drawElementSymbols(ctx, w, h, weights) {
+  const symSize = Math.min(w, h) * 0.038;
+  
+  // Calculate pad boundaries
+  const padSize = Math.min(w, h) * PAD_SCALE * 2;
+  const padHalf = padSize / 2;
+  const centerX = w / 2;
+  const centerY = h / 2;
+  const padLeft = centerX - padHalf;
+  const padRight = centerX + padHalf;
+  const padTop = centerY - padHalf;
+  const padBottom = centerY + padHalf;
+  
+  // Font setup for labels
+  ctx.font = `${symSize * 0.45}px "Cormorant Garamond", Georgia, serif`;
+  ctx.textAlign = 'center';
+  ctx.fillStyle = 'rgba(0,0,0,1)';
+  
+  const landscape = isLandscape();
+  
+  if (landscape) {
+    // LANDSCAPE: Elements at pad corners, close to the pad
+    const topCenterY = padTop / 2;
+    const bottomCenterY = padBottom + (h - padBottom) / 2;
+    
+    // Fire: top-left corner of pad
+    let sx = padLeft;
+    let sy = topCenterY;
+    drawElementSymbol(ctx, sx, sy, symSize, false, false, weights.fire, 'fire');
+    
+    // Air: top-right corner of pad
+    sx = padRight;
+    sy = topCenterY;
+    drawElementSymbol(ctx, sx, sy, symSize, false, true, weights.air, 'air');
+    
+    // Water: bottom-left corner of pad
+    sx = padLeft;
+    sy = bottomCenterY;
+    drawElementSymbol(ctx, sx, sy, symSize, true, false, weights.water, 'water');
+    
+    // Earth: bottom-right corner of pad
+    sx = padRight;
+    sy = bottomCenterY;
+    drawElementSymbol(ctx, sx, sy, symSize, true, true, weights.earth, 'earth');
+    
+  } else {
+    // PORTRAIT: Elements on LEFT and RIGHT of pad (original layout)
+    const leftCenterX = padLeft / 2;
+    const rightCenterX = padRight + (w - padRight) / 2;
+    
+    // Fire: top-left (horizontally centered, at pad top height)
+    let sx = leftCenterX;
+    let sy = padTop;
+    drawElementSymbol(ctx, sx, sy, symSize, false, false, weights.fire, 'fire');
+    
+    // Air: top-right (horizontally centered, at pad top height)
+    sx = rightCenterX;
+    sy = padTop;
+    drawElementSymbol(ctx, sx, sy, symSize, false, true, weights.air, 'air');
+    
+    // Water: bottom-left (horizontally centered, at pad bottom height)
+    sx = leftCenterX;
+    sy = padBottom;
+    drawElementSymbol(ctx, sx, sy, symSize, true, false, weights.water, 'water');
+    
+    // Earth: bottom-right (horizontally centered, at pad bottom height)
+    sx = rightCenterX;
+    sy = padBottom;
+    drawElementSymbol(ctx, sx, sy, symSize, true, true, weights.earth, 'earth');
+  }
+}
+
+function drawTrailIncremental() {
+  // Only draw segments that haven't been drawn yet
+  if (!trailCtx || trail.length < 2 || lastDrawnTrailIndex >= trail.length) return;
+  
+  // Setup drawing style (only if we have new segments to draw)
+  trailCtx.lineCap = 'round';
+  trailCtx.lineJoin = 'round';
+  trailCtx.lineWidth = 1.5;
+  
+  // Start from where we left off (minimum index 1 since we need a previous point)
+  const startIdx = Math.max(1, lastDrawnTrailIndex);
+  
+  // Draw only the new segments
+  for (let i = startIdx; i < trail.length; i++) {
+    const prev = trail[i - 1];
+    const curr = trail[i];
+    
+    // Use averaged color, solid opacity (no fade)
+    const r = ((prev.r + curr.r) / 2) | 0;
+    const g = ((prev.g + curr.g) / 2) | 0;
+    const b = ((prev.b + curr.b) / 2) | 0;
+    
+    trailCtx.strokeStyle = `rgb(${r}, ${g}, ${b})`;
+    trailCtx.beginPath();
+    trailCtx.moveTo(
+      cachedCenterX + prev.x * cachedPadHalf,
+      cachedCenterY - prev.y * cachedPadHalf
+    );
+    trailCtx.lineTo(
+      cachedCenterX + curr.x * cachedPadHalf,
+      cachedCenterY - curr.y * cachedPadHalf
+    );
+    trailCtx.stroke();
+  }
+  
+  // Update the index tracker
+  lastDrawnTrailIndex = trail.length;
+}
+
+function drawModeButtons(ctx, w, h) {
+  // Calculate pad dimensions first
+  const padSize = Math.min(w, h) * PAD_SCALE * 2;
+  const padHalf = padSize / 2;
+  const centerX = w / 2;
+  const centerY = h / 2;
+  const padLeft = centerX - padHalf;
+  const padRight = centerX + padHalf;
+  const padTop = centerY - padHalf;
+  const padBottom = centerY + padHalf;
+  
+  const landscape = isLandscape();
+  
+  if (landscape) {
+    // LANDSCAPE: Buttons on LEFT and RIGHT sides of pad
+    const leftSpace = padLeft;
+    const rightSpace = w - padRight;
+    const horizontalSpace = Math.min(leftSpace, rightSpace);
+    
+    // Determine if we need 2 columns based on vertical space
+    const aspectRatio = w / h;
+    const useTwoColumns = aspectRatio > 1.2; // Use 2 columns when wide enough
+    
+    if (useTwoColumns) {
+      // TWO COLUMNS layout: mirrored diamond pattern on left and right
+      const maxBtnSizeFromHeight = (padSize * 0.9) / 3;
+      const maxBtnSizeFromWidth = horizontalSpace * 0.42;
+      const btnSize = Math.min(maxBtnSizeFromHeight, maxBtnSizeFromWidth, 80);
+      const minBtnSize = 35;
+      const actualBtnSize = Math.max(btnSize, minBtnSize);
+      
+      const btnSpacingY = actualBtnSize * 1.5;
+      const btnSpacingX = actualBtnSize * 1.2;
+      
+      // Left area: patterns 0-4 (cols: 0,1,2 on outer col, 3,4 on inner col)
+      const leftCol1X = leftSpace * 0.35;
+      const leftCol2X = leftSpace * 0.72;
+      // Right area: patterns 5-9 (cols: 5,6 on inner col, 7,8,9 on outer col)
+      const rightCol1X = padRight + (w - padRight) * 0.28;
+      const rightCol2X = padRight + (w - padRight) * 0.65;
+      
+      for (let i = 0; i < PATTERNS.length; i++) {
+        const mode = i + 1;
+        const isLeft = i < 5;
+        let btnX, btnY;
+        
+        if (isLeft) {
+          // Left area: 0,1,2 on col 1 (outer); 3,4 on col 2 (inner)
+          if (i < 3) {
+            const col1Height = 2 * btnSpacingY;
+            btnY = centerY - col1Height / 2 + i * btnSpacingY;
+            btnX = leftCol1X;
+          } else {
+            const col2Height = 1 * btnSpacingY;
+            btnY = centerY - col2Height / 2 + (i - 3) * btnSpacingY;
+            btnX = leftCol2X;
+          }
+        } else {
+          // Right area: 5,6 on col 1 (inner); 7,8,9 on col 2 (outer)
+          const rightIndex = i - 5;
+          if (rightIndex < 2) {
+            const col1Height = 1 * btnSpacingY;
+            btnY = centerY - col1Height / 2 + rightIndex * btnSpacingY;
+            btnX = rightCol1X;
+          } else {
+            const col2Height = 2 * btnSpacingY;
+            btnY = centerY - col2Height / 2 + (rightIndex - 2) * btnSpacingY;
+            btnX = rightCol2X;
+          }
+        }
+        
+        const isActive = autoModeEnabled && autoMode === mode;
+        
+        MODE_BUTTONS[i].cx = btnX;
+        MODE_BUTTONS[i].cy = btnY;
+        MODE_BUTTONS[i].r = actualBtnSize / 2 + 15;
+        
+        ctx.beginPath();
+        ctx.arc(btnX, btnY, actualBtnSize / 2, 0, Math.PI * 2);
+        
+        if (isActive) {
+          ctx.fillStyle = 'rgba(0, 0, 0, 0.06)';
+          ctx.fill();
+          ctx.strokeStyle = 'rgba(0, 0, 0, 0.25)';
+          ctx.lineWidth = 1.5;
+        } else {
+          ctx.strokeStyle = 'rgba(0, 0, 0, 0.08)';
+          ctx.lineWidth = 1;
+        }
+        ctx.stroke();
+        
+        // Draw pattern icon (rotated -90° for landscape, except asymmetric patterns)
+        const iconRotation = (i === 0 || i === 9) ? 0 : -Math.PI / 2;
+        drawPatternIcon(ctx, btnX, btnY, actualBtnSize * 0.32, i, isActive, iconRotation);
+      }
+    } else {
+      // SINGLE COLUMN layout: 5 buttons left, 5 buttons right
+      const maxBtnSizeFromHeight = (padSize * 1.0) / 4.8;
+      const maxBtnSizeFromWidth = horizontalSpace * 0.7;
+      const btnSize = Math.min(maxBtnSizeFromHeight, maxBtnSizeFromWidth, 100);
+      const minBtnSize = 40;
+      const actualBtnSize = Math.max(btnSize, minBtnSize);
+      
+      const btnSpacing = actualBtnSize * 1.6;
+      const totalHeight = 4 * btnSpacing;
+      const startY = centerY - totalHeight / 2;
+      
+      const leftBtnX = padLeft / 2;
+      const rightBtnX = padRight + (w - padRight) / 2;
+      
+      for (let i = 0; i < PATTERNS.length; i++) {
+        const mode = i + 1;
+        const isLeft = i < 5;
+        const btnX = isLeft ? leftBtnX : rightBtnX;
+        const indexInCol = isLeft ? i : i - 5;
+        const btnY = startY + indexInCol * btnSpacing;
+        const isActive = autoModeEnabled && autoMode === mode;
+        
+        MODE_BUTTONS[i].cx = btnX;
+        MODE_BUTTONS[i].cy = btnY;
+        MODE_BUTTONS[i].r = actualBtnSize / 2 + 20;
+        
+        ctx.beginPath();
+        ctx.arc(btnX, btnY, actualBtnSize / 2, 0, Math.PI * 2);
+        
+        if (isActive) {
+          ctx.fillStyle = 'rgba(0, 0, 0, 0.06)';
+          ctx.fill();
+          ctx.strokeStyle = 'rgba(0, 0, 0, 0.25)';
+          ctx.lineWidth = 1.5;
+        } else {
+          ctx.strokeStyle = 'rgba(0, 0, 0, 0.08)';
+          ctx.lineWidth = 1;
+        }
+        ctx.stroke();
+        
+        // Draw pattern icon (rotated -90° for landscape, except asymmetric patterns)
+        const iconRot = (i === 0 || i === 9) ? 0 : -Math.PI / 2;
+        drawPatternIcon(ctx, btnX, btnY, actualBtnSize * 0.32, i, isActive, iconRot);
+      }
+    }
+  } else {
+    // PORTRAIT: Buttons on TOP and BOTTOM of pad (original layout)
+    const topSpace = padTop;
+    const bottomSpace = h - padBottom;
+    const verticalSpace = Math.min(topSpace, bottomSpace);
+    
+    const aspectRatio = w / h;
+    const useTwoRows = aspectRatio < 0.85;
+    
+    if (useTwoRows) {
+      // TWO ROWS layout
+      const maxBtnSizeFromWidth = (padSize * 0.9) / 3;
+      const maxBtnSizeFromHeight = verticalSpace * 0.42;
+      const btnSize = Math.min(maxBtnSizeFromWidth, maxBtnSizeFromHeight, 80);
+      const minBtnSize = 35;
+      const actualBtnSize = Math.max(btnSize, minBtnSize);
+      
+      const btnSpacingX = actualBtnSize * 1.5;
+      
+      const topRow1Y = padTop * 0.35;
+      const topRow2Y = padTop * 0.72;
+      const bottomRow1Y = padBottom + (h - padBottom) * 0.28;
+      const bottomRow2Y = padBottom + (h - padBottom) * 0.65;
+      
+      for (let i = 0; i < PATTERNS.length; i++) {
+        const mode = i + 1;
+        const isTop = i < 5;
+        let btnX, btnY;
+        
+        if (isTop) {
+          if (i < 3) {
+            const row1Width = 2 * btnSpacingX;
+            btnX = centerX - row1Width / 2 + i * btnSpacingX;
+            btnY = topRow1Y;
+          } else {
+            const row2Width = 1 * btnSpacingX;
+            btnX = centerX - row2Width / 2 + (i - 3) * btnSpacingX;
+            btnY = topRow2Y;
+          }
+        } else {
+          const bottomIndex = i - 5;
+          if (bottomIndex < 2) {
+            const row1Width = 1 * btnSpacingX;
+            btnX = centerX - row1Width / 2 + bottomIndex * btnSpacingX;
+            btnY = bottomRow1Y;
+          } else {
+            const row2Width = 2 * btnSpacingX;
+            btnX = centerX - row2Width / 2 + (bottomIndex - 2) * btnSpacingX;
+            btnY = bottomRow2Y;
+          }
+        }
+        
+        const isActive = autoModeEnabled && autoMode === mode;
+        
+        MODE_BUTTONS[i].cx = btnX;
+        MODE_BUTTONS[i].cy = btnY;
+        MODE_BUTTONS[i].r = actualBtnSize / 2 + 15;
+        
+        ctx.beginPath();
+        ctx.arc(btnX, btnY, actualBtnSize / 2, 0, Math.PI * 2);
+        
+        if (isActive) {
+          ctx.fillStyle = 'rgba(0, 0, 0, 0.06)';
+          ctx.fill();
+          ctx.strokeStyle = 'rgba(0, 0, 0, 0.25)';
+          ctx.lineWidth = 1.5;
+        } else {
+          ctx.strokeStyle = 'rgba(0, 0, 0, 0.08)';
+          ctx.lineWidth = 1;
+        }
+        ctx.stroke();
+        
+        drawPatternIcon(ctx, btnX, btnY, actualBtnSize * 0.32, i, isActive, 0);
+      }
+    } else {
+      // SINGLE ROW layout
+      const maxBtnSizeFromWidth = (padSize * 1.0) / 4.8;
+      const maxBtnSizeFromHeight = verticalSpace * 0.7;
+      const btnSize = Math.min(maxBtnSizeFromWidth, maxBtnSizeFromHeight, 100);
+      const minBtnSize = 40;
+      const actualBtnSize = Math.max(btnSize, minBtnSize);
+      
+      const btnSpacing = actualBtnSize * 1.6;
+      const totalWidth = 4 * btnSpacing;
+      const startX = centerX - totalWidth / 2;
+      
+      const topBtnY = padTop / 2;
+      const bottomBtnY = padBottom + (h - padBottom) / 2;
+      
+      for (let i = 0; i < PATTERNS.length; i++) {
+        const mode = i + 1;
+        const isTop = i < 5;
+        const btnY = isTop ? topBtnY : bottomBtnY;
+        const indexInRow = isTop ? i : i - 5;
+        const btnX = startX + indexInRow * btnSpacing;
+        const isActive = autoModeEnabled && autoMode === mode;
+        
+        MODE_BUTTONS[i].cx = btnX;
+        MODE_BUTTONS[i].cy = btnY;
+        MODE_BUTTONS[i].r = actualBtnSize / 2 + 20;
+        
+        ctx.beginPath();
+        ctx.arc(btnX, btnY, actualBtnSize / 2, 0, Math.PI * 2);
+        
+        if (isActive) {
+          ctx.fillStyle = 'rgba(0, 0, 0, 0.06)';
+          ctx.fill();
+          ctx.strokeStyle = 'rgba(0, 0, 0, 0.25)';
+          ctx.lineWidth = 1.5;
+        } else {
+          ctx.strokeStyle = 'rgba(0, 0, 0, 0.08)';
+          ctx.lineWidth = 1;
+        }
+        ctx.stroke();
+        
+        drawPatternIcon(ctx, btnX, btnY, actualBtnSize * 0.32, i, isActive, 0);
+      }
+    }
+  }
+}
+
+// Build/rebuild the pattern icon cache at a specific size
+function buildPatternIconCache(size) {
+  patternIconCache = [];
+  patternIconSize = size;
+  
+  const canvasSize = Math.ceil(size * 3.5); // More padding for larger icons
+  
+  for (let i = 0; i < PATTERNS.length; i++) {
+    const pattern = PATTERNS[i];
+    const iconFn = pattern.iconFn || pattern.fn;
+    
+    // Create active version
+    const activeCanvas = document.createElement('canvas');
+    activeCanvas.width = canvasSize;
+    activeCanvas.height = canvasSize;
+    const activeCtx = activeCanvas.getContext('2d');
+    activeCtx.clearRect(0, 0, canvasSize, canvasSize);
+    drawPatternIconDirect(activeCtx, canvasSize / 2, canvasSize / 2, size, iconFn, true, i);
+    
+    // Create inactive version
+    const inactiveCanvas = document.createElement('canvas');
+    inactiveCanvas.width = canvasSize;
+    inactiveCanvas.height = canvasSize;
+    const inactiveCtx = inactiveCanvas.getContext('2d');
+    inactiveCtx.clearRect(0, 0, canvasSize, canvasSize);
+    drawPatternIconDirect(inactiveCtx, canvasSize / 2, canvasSize / 2, size, iconFn, false, i);
+    
+    patternIconCache.push({ active: activeCanvas, inactive: inactiveCanvas });
+  }
+}
+
+// Direct drawing function (used for cache building)
+function drawPatternIconDirect(ctx, cx, cy, size, patternFn, isActive, patternIndex) {
+  ctx.save();
+  
+  // Compensate for visual density - simpler patterns need thicker strokes
+  // to match the visual weight of complex patterns with many overlapping lines
+  const strokeWeights = {
+    0: 2.2,   // Lissajous - very simple, needs thick
+    1: 0.8,   // Spirograph - very dense
+    2: 0.7,   // Starburst - dense
+    3: 1.4,   // Rose - medium
+    4: 1.0,   // Epitrochoid - dense
+    5: 0.4,   // Coil - extremely dense
+    6: 1.2,   // Trifolium - medium
+    7: 2.0,   // Astroid - very simple
+    8: 0.5,   // Weave - very dense
+    9: 2.2    // Infinity - very simple
+  };
+  
+  // Opacity compensation - dense patterns get lighter color
+  const strokeOpacity = {
+    0: 0.5,   // Lissajous
+    1: 0.35,  // Spirograph - dense, lighter
+    2: 0.18,  // Starburst - very dense, much lighter (was 0.25)
+    3: 0.45,  // Rose
+    4: 0.35,  // Epitrochoid - dense, lighter
+    5: 0.18,  // Coil - extremely dense, very light
+    6: 0.4,   // Trifolium
+    7: 0.5,   // Astroid
+    8: 0.2,   // Weave - very dense, very light
+    9: 0.5    // Infinity
+  };
+  
+  const baseWeight = strokeWeights[patternIndex] || 1.0;
+  const baseOpacity = strokeOpacity[patternIndex] || 0.4;
+  const activeOpacity = isActive ? baseOpacity : baseOpacity * 0.5;
+  
+  ctx.strokeStyle = `rgba(0, 0, 0, ${activeOpacity})`;
+  ctx.lineWidth = baseWeight * (isActive ? 1.2 : 1.0);
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  
+  ctx.beginPath();
+  
+  const steps = PATTERN_ICON_RESOLUTION;
+  for (let i = 0; i <= steps; i++) {
+    const u = i / steps;
+    const pt = patternFn(u);
+    const x = cx + pt.x * size;
+    const y = cy - pt.y * size;
+    
+    if (i === 0) {
+      ctx.moveTo(x, y);
+    } else {
+      ctx.lineTo(x, y);
+    }
+  }
+  
+  ctx.stroke();
+  ctx.restore();
+}
+
+// Draw pattern icon (direct drawing, no cache)
+function drawPatternIcon(ctx, cx, cy, size, patternIndex, isActive, rotation = 0) {
+  const pattern = PATTERNS[patternIndex];
+  if (!pattern) return;
+  const iconFn = pattern.iconFn || pattern.fn;
+  
+  if (rotation !== 0) {
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(rotation);
+    drawPatternIconDirect(ctx, 0, 0, size, iconFn, isActive, patternIndex);
+    ctx.restore();
+  } else {
+    drawPatternIconDirect(ctx, cx, cy, size, iconFn, isActive, patternIndex);
+  }
+}
+
+function hitTestModeButton(x, y) {
+  for (const btn of MODE_BUTTONS) {
+    const dx = x - btn.cx;
+    const dy = y - btn.cy;
+    if (dx * dx + dy * dy <= btn.r * btn.r) {
+      return btn.mode;
+    }
+  }
+  return 0;
+}
+
+// =======================================================
+// ANIMATION LOOP
+// =======================================================
+function animate() {
+  // Auto mode: spirograph-inspired movements (paused while adjusting tempo)
+  if (autoModeEnabled && hasStarted && !isTempoAdjusting) {
+    updateAutoModeTarget();
+    // In auto mode, follow the pattern directly (no smoothing)
+    currentX = targetX;
+    currentY = targetY;
+  } else if (!autoModeEnabled) {
+    // Manual mode: direct tracking (no smoothing)
+    currentX = targetX;
+    currentY = targetY;
+  }
+  // When isTempoAdjusting is true, cursor stays at current position
+  
+  // === MOVEMENT VELOCITY TRACKING ===
+  // Calculate instantaneous velocity
+  const dx = currentX - prevX;
+  const dy = currentY - prevY;
+  const instantVelocity = Math.sqrt(dx * dx + dy * dy);
+  
+  // Smooth the velocity (fast attack, slow decay for natural feel)
+  const velocityAttack = 0.3;   // Quick response to movement
+  const velocityDecay = 0.02;   // Slow settling when stopped
+  
+  if (instantVelocity > currentVelocity) {
+    currentVelocity += (instantVelocity - currentVelocity) * velocityAttack;
+  } else {
+    currentVelocity += (instantVelocity - currentVelocity) * velocityDecay;
+  }
+  
+  // Clamp and scale velocity (0-1 range, with sensitivity adjustment)
+  const velocityScale = 15; // Adjust sensitivity
+  const normalizedVelocity = Math.min(1, currentVelocity * velocityScale);
+  
+  // Store previous position
+  prevX = currentX;
+  prevY = currentY;
+  
+  // === AUDIO UPDATES (throttled - only when position changes) ===
+  const posDelta = Math.abs(currentX - lastAudioX) + Math.abs(currentY - lastAudioY);
+  if (posDelta > 0.005 || !lastAudioX) {
+    lastAudioX = currentX;
+    lastAudioY = currentY;
+    
+    // Update drone weights
+    updateDroneWeights();
+    
+    // Apply movement response to audio
+    if (audioCtx && movementBrightness && movementGain) {
+      const now = audioCtx.currentTime;
+      const targetFreq = 2000 + normalizedVelocity * 6000;
+      movementBrightness.frequency.setTargetAtTime(targetFreq, now, 0.1);
+      const targetGainVal = 1.0 + normalizedVelocity * 0.15;
+      movementGain.gain.setTargetAtTime(targetGainVal, now, 0.1);
+    }
+    
+    // Register shift based on vertical position
+    if (audioCtx && registerHighpass && registerLowpass) {
+      const now = audioCtx.currentTime;
+      const yNorm = (currentY + 1) / 2;
+      const hpFreq = 20 + yNorm * 100;
+      registerHighpass.frequency.setTargetAtTime(hpFreq, now, 0.3);
+      const lpFreq = 6000 + yNorm * 12000;
+      registerLowpass.frequency.setTargetAtTime(lpFreq, now, 0.3);
+    }
+  }
+  
+  // Record trail points during auto mode (but not while adjusting tempo)
+  if (autoModeEnabled && hasStarted && !isTempoAdjusting) {
+    const weights = getElementWeights(currentX, currentY);
+    
+    // Get blended color for this point
+    let r = 0, g = 0, b = 0;
+    for (const [element, weight] of Object.entries(weights)) {
+      const color = DRONE_CONFIG[element].color;
+      r += color[0] * weight;
+      g += color[1] * weight;
+      b += color[2] * weight;
+    }
+    
+    const newPoint = { 
+      x: currentX, 
+      y: currentY, 
+      r: r | 0, 
+      g: g | 0, 
+      b: b | 0,
+      time: performance.now()
+    };
+    
+    // Only add point if we've moved enough (avoid clustering)
+    if (!lastTrailPoint || 
+        Math.abs(newPoint.x - lastTrailPoint.x) > 0.002 || 
+        Math.abs(newPoint.y - lastTrailPoint.y) > 0.002) {
+      trail.push(newPoint);
+      lastTrailPoint = newPoint;
+      
+      // Trim trail if too long
+      if (trail.length > MAX_TRAIL_LENGTH) {
+        trail.shift();
+      }
+    }
+  }
+  
+  // Draw
+  drawCanvas();
+  
+  requestAnimationFrame(animate);
+}
+
+// =======================================================
+// TRAIL RESET
+// =======================================================
+function resetTrail() {
+  trail.length = 0;
+  lastTrailPoint = null;
+  lastDrawnTrailIndex = 0;
+  if (trailCtx) {
+    trailCtx.clearRect(0, 0, padWidth, padHeight);
+  }
+}
+
+// =======================================================
+// INPUT HANDLING
+// =======================================================
+function handleStart(e) {
+  e.preventDefault();
+  
+  if (!hasStarted) {
+    initAudio();
+    audioCtx.resume();
+    hasStarted = true;
+    
+    // Start in auto mode (Icon Spiro by default)
+    startAutoMode(2);
+  }
+}
+
+function handleMove(e) {
+  if (!hasStarted) return;
+  
+  const rect = padCanvas.getBoundingClientRect();
+  let clientX, clientY;
+  
+  if (e.touches) {
+    clientX = e.touches[0].clientX;
+    clientY = e.touches[0].clientY;
+  } else {
+    clientX = e.clientX;
+    clientY = e.clientY;
+  }
+  
+  // Calculate pad boundaries
+  const minDim = Math.min(rect.width, rect.height);
+  const padPixelSize = minDim * PAD_SCALE * 2;
+  const padCenterX = rect.width / 2;
+  const padCenterY = rect.height / 2;
+  const padHalf = padPixelSize / 2;
+  
+  // Get position relative to canvas
+  const canvasX = clientX - rect.left;
+  const canvasY = clientY - rect.top;
+  
+  // Check if touch is inside pad boundaries
+  const padLeft = padCenterX - padHalf;
+  const padRight = padCenterX + padHalf;
+  const padTop = padCenterY - padHalf;
+  const padBottom = padCenterY + padHalf;
+  
+  if (canvasX < padLeft || canvasX > padRight || canvasY < padTop || canvasY > padBottom) {
+    // Touch is outside pad - ignore it
+    return;
+  }
+  
+  // Disable auto mode on manual interaction inside pad
+  if (autoModeEnabled) {
+    stopAutoMode();
+  }
+  
+  // Calculate position relative to pad center, normalized to pad size
+  const relX = canvasX - padCenterX;
+  const relY = canvasY - padCenterY;
+  
+  // Scale to [-1, 1] based on pad half-size
+  targetX = relX / padHalf;
+  targetY = -relY / padHalf; // Flip Y so up is positive
+  
+  // Clamp (shouldn't be needed now but just in case)
+  targetX = Math.max(-1, Math.min(1, targetX));
+  targetY = Math.max(-1, Math.min(1, targetY));
+}
+
+function handleEnd() {
+  // Optional: could re-enable drift after a delay
+}
+
+// =======================================================
+// KEYBOARD CONTROLS
+// =======================================================
+function handleKeydown(e) {
+  const key = e.key.toLowerCase();
+  
+  // 1-9 and 0 to select patterns directly (0 = pattern 10)
+  const numKey = parseInt(e.key);
+  if (!isNaN(numKey)) {
+    e.preventDefault();
+    const mode = numKey === 0 ? 10 : numKey;
+    if (mode <= PATTERNS.length) {
+      if (!hasStarted) handleStart(e);
+      startAutoMode(mode);
+    }
+  }
+  
+  // Space to toggle auto mode on/off
+  if (key === ' ') {
+    e.preventDefault();
+    if (!hasStarted) {
+      handleStart(e);
+    } else {
+      if (autoModeEnabled) {
+        stopAutoMode();
+      } else {
+        startAutoMode(autoMode);
+      }
+    }
+  }
+  
+  // R to restart current auto mode from beginning
+  if (key === 'r') {
+    e.preventDefault();
+    if (!hasStarted) handleStart(e);
+    startAutoMode(autoMode);
+  }
+  
+  // M to toggle melody mute
+  if (key === 'm') {
+    e.preventDefault();
+    melodyMuted = !melodyMuted;
+  }
+  
+  // Left/Right arrows to cycle through patterns
+  if (e.key === 'ArrowRight') {
+    e.preventDefault();
+    if (!hasStarted) handleStart(e);
+    const nextMode = autoMode >= PATTERNS.length ? 1 : autoMode + 1;
+    startAutoMode(nextMode);
+  }
+  if (e.key === 'ArrowLeft') {
+    e.preventDefault();
+    if (!hasStarted) handleStart(e);
+    const prevMode = autoMode <= 1 ? PATTERNS.length : autoMode - 1;
+    startAutoMode(prevMode);
+  }
+  
+  // Up/Down arrows to adjust tempo (+ and - also work)
+  if (e.key === 'ArrowUp' || key === '+' || key === '=') {
+    e.preventDefault();
+    tempoMultiplier = Math.min(TEMPO_MAX, tempoMultiplier + 0.1);
+    updateTempoSlider();
+  }
+  if (e.key === 'ArrowDown' || key === '-' || key === '_') {
+    e.preventDefault();
+    tempoMultiplier = Math.max(TEMPO_MIN, tempoMultiplier - 0.1);
+    updateTempoSlider();
+  }
+}
+
+// Update tempo and handle trail reset
+function updateTempoSlider() {
+  // Pause drawing and movement
+  isTempoAdjusting = true;
+  
+  // Reset trail
+  resetTrail();
+  
+  // Clear any existing timeout
+  if (tempoAdjustTimeout) {
+    clearTimeout(tempoAdjustTimeout);
+  }
+  
+  // Wait 500ms after user stops adjusting, then resume
+  tempoAdjustTimeout = setTimeout(() => {
+    isTempoAdjusting = false;
+    // Restart auto mode from beginning
+    if (autoModeEnabled) {
+      autoStartTime = performance.now();
+    }
+  }, 500);
+}
+
+// =======================================================
+// INIT
+// =======================================================
+function init() {
+  initCanvas();
+  
+  // Draw one frame immediately to populate button hit regions
+  drawCanvas();
+  
+  // Detect if device supports touch
+  let isTouchDevice = false;
+  
+  // Event listeners - use pointer events primarily, with touch fallback
+  padCanvas.addEventListener('pointerdown', (e) => {
+    // Skip if this is a touch event and we're handling via touchstart
+    if (e.pointerType === 'touch') {
+      isTouchDevice = true;
+      return; // Let touchstart handle it
+    }
+    
+    const rect = padCanvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    
+    // Check if clicking melody mute button
+    if (hitTestMelodyButton(x, y)) {
+      e.preventDefault();
+      melodyMuted = !melodyMuted;
+      return;
+    }
+    
+    // Check if clicking a mode button
+    const hitMode = hitTestModeButton(x, y);
+    if (hitMode) {
+      e.preventDefault();
+      if (!hasStarted) {
+        initAudio();
+        audioCtx.resume();
+        hasStarted = true;
+      }
+      
+      // If clicking the already-active mode, toggle off
+      if (autoModeEnabled && autoMode === hitMode) {
+        stopAutoMode();
+      } else {
+        startAutoMode(hitMode);
+      }
+      return;
+    }
+    
+    handleStart(e);
+    handleMove(e);
+    resetTrail();
+    padCanvas.setPointerCapture(e.pointerId);
+  });
+  
+  padCanvas.addEventListener('pointermove', (e) => {
+    if (e.pointerType === 'touch') return; // Let touchmove handle it
+    if (e.buttons > 0 || e.pressure > 0) {
+      handleMove(e);
+    }
+  });
+  
+  padCanvas.addEventListener('pointerup', (e) => {
+    if (e.pointerType === 'touch') return; // Let touchend handle it
+    handleEnd();
+  });
+  
+  // Touch events for mobile - handle button taps immediately on touchend for reliability
+  let touchStartedOnButton = false;
+  let touchButtonMode = 0;
+  
+  padCanvas.addEventListener('touchstart', (e) => {
+    // Use changedTouches to get the touch that just started
+    const touch = e.changedTouches[0];
+    const rect = padCanvas.getBoundingClientRect();
+    const x = touch.clientX - rect.left;
+    const y = touch.clientY - rect.top;
+    
+    // Check melody mute button
+    if (hitTestMelodyButton(x, y)) {
+      e.preventDefault();
+      touchStartedOnButton = true;
+      touchButtonMode = -1; // Special value for melody button
+      return;
+    }
+    
+    // Check mode buttons
+    const hitMode = hitTestModeButton(x, y);
+    if (hitMode) {
+      e.preventDefault();
+      touchStartedOnButton = true;
+      touchButtonMode = hitMode;
+      return;
+    }
+    
+    touchStartedOnButton = false;
+    touchButtonMode = 0;
+    handleStart(e);
+    resetTrail();
+  }, { passive: false });
+  
+  padCanvas.addEventListener('touchmove', (e) => {
+    if (touchStartedOnButton) {
+      e.preventDefault();
+      return; // Don't move pad while touching a button
+    }
+    e.preventDefault();
+    handleMove(e);
+  }, { passive: false });
+  
+  padCanvas.addEventListener('touchend', (e) => {
+    if (touchStartedOnButton && touchButtonMode) {
+      e.preventDefault();
+      
+      // Check if finger lifted on the same button it started on
+      const touch = e.changedTouches[0];
+      const rect = padCanvas.getBoundingClientRect();
+      const x = touch.clientX - rect.left;
+      const y = touch.clientY - rect.top;
+      
+      // Melody button (special value -1)
+      if (touchButtonMode === -1) {
+        if (hitTestMelodyButton(x, y)) {
+          melodyMuted = !melodyMuted;
+        }
+        touchStartedOnButton = false;
+        touchButtonMode = 0;
+        return;
+      }
+      
+      const hitMode = hitTestModeButton(x, y);
+      
+      if (hitMode === touchButtonMode) {
+        if (!hasStarted) {
+          initAudio();
+          audioCtx.resume();
+          hasStarted = true;
+        }
+        
+        if (autoModeEnabled && autoMode === hitMode) {
+          stopAutoMode();
+        } else {
+          startAutoMode(hitMode);
+        }
+      }
+      
+      touchStartedOnButton = false;
+      touchButtonMode = 0;
+      return;
+    }
+    
+    touchStartedOnButton = false;
+    touchButtonMode = 0;
+    handleEnd();
+  }, { passive: false });
+  
+  // Keyboard
+  window.addEventListener('keydown', handleKeydown);
+  
+  // === TAB VISIBILITY HANDLER ===
+  // Pause pattern timing when tab is hidden to prevent jumps
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      // Tab became hidden - record the time
+      tabHiddenTime = performance.now();
+    } else {
+      // Tab became visible - adjust autoStartTime to compensate for hidden duration
+      if (tabHiddenTime > 0 && autoModeEnabled) {
+        const hiddenDuration = performance.now() - tabHiddenTime;
+        autoStartTime += hiddenDuration;  // Shift start time forward
+      }
+      tabHiddenTime = 0;
+    }
+  });
+  
+  // Start animation loop
+  requestAnimationFrame(animate);
+}
+
+init();
+</script>
+</body>
+</html>
